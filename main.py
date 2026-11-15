@@ -284,9 +284,9 @@ def cmd_run():
     if os.path.exists(rolled):
         os.remove(rolled)
         engine.log("error", "La mise à jour plantait au démarrage : version précédente remise automatiquement")
-        engine.notify("⚠️ La nouvelle version plantait au démarrage. J'ai remis automatiquement la version précédente.")
-    start_msg = "🚀 Micro-invest démarré — mode %s\nVersion : %s\n\n%s" % (
-        engine.mode_label(), version, engine.status_text())
+        engine.notify("⚠️ <b>La nouvelle version plantait au démarrage.</b>\nJ'ai remis automatiquement la version précédente. "
+                      "Rien à faire de ton côté : préviens-moi et je corrige.")
+    start_msg = "🚀 <b>Micro-invest a démarré</b> · version %s\n\n%s" % (version.split(" — ")[0], engine.status_text())
     if bot:
         try:
             bot.notify(start_msg, keyboard=True)  # affiche aussi les boutons en bas de l'écran
@@ -302,17 +302,18 @@ def cmd_run():
         if os.path.exists(pending) and time.time() - started > 90:
             os.remove(pending)  # la nouvelle version tourne bien depuis 90 s : elle est validée
             engine.log("info", "Mise à jour validée")
-            engine.notify("✅ Mise à jour validée : la nouvelle version fonctionne.")
+            engine.notify("✅ <b>Mise à jour validée</b> : la nouvelle version fonctionne.")
         stop.wait(30)
     log.info("Arrêt demandé (code %d)", exit_code[0])
     if exit_code[0] != 4:
-        engine.notify("⏹ Micro-invest arrêté.")
+        engine.notify("⏹ <b>Micro-invest arrêté.</b>")
     sys.exit(exit_code[0])
 
 
 def cmd_status():
     cfg = config_mod.load(CFG)
-    print(Engine(cfg, CFG, BASE).status_text())
+    from microinvest import fmt
+    print(fmt.strip_tags(Engine(cfg, CFG, BASE).status_text()))
 
 
 def main():

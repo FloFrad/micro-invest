@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 
 from .broker import BrokerError
+from . import fmt as F
 
 log = logging.getLogger("radar")
 
@@ -307,26 +308,28 @@ class Radar:
     def summary_text(self, data):
         if not data:
             return "Pas encore d'analyse."
-        d = time.strftime("%d/%m %H:%M", time.localtime(data["ts"]))
-        lines = ["🔭 Radar du %s" % d, "", "🪙 Cryptos — %d analysées, les mieux notées :" % len(data["crypto"])]
+        d = time.strftime("%d/%m à %Hh%M", time.localtime(data["ts"]))
+        lines = ["🔭 <b>Radar du %s</b>" % d,
+                 "<i>%d cryptos et %d actions/ETF notées sur 100</i>" % (len(data["crypto"]), len(data["stocks"])), "",
+                 "🪙 <b>Cryptos les mieux notées</b>"]
         for r in self.picks(data, "crypto"):
-            lines.append("%s %s — %d/100 %s\n   %s" % (r["label"].split()[0], r["symbol"], r["score"],
-                                                    "✅ déjà dans ton plan" if self._in_plan(r) else "",
-                                                    key_reason(r)))
+            lines.append("%s <b>%s</b> · %d/100 %s%s\n      <i>%s</i>" % (
+                r["label"].split()[0], F.esc(r["symbol"]), r["score"], F.bar(r["score"] / 100.0, 5),
+                "  ✅ dans ton plan" if self._in_plan(r) else "", F.esc(key_reason(r))))
         if not data["crypto"]:
             lines.append("   (données indisponibles)")
-        lines += ["", "📈 Actions & ETF — %d analysés, les mieux notés :" % len(data["stocks"])]
+        lines += ["", "📈 <b>Actions &amp; ETF les mieux notés</b>"]
         for r in self.picks(data, "stocks"):
-            lines.append("%s %s (%s) — %d/100 %s\n   %s" % (r["label"].split()[0], r["name"], r["category"], r["score"],
-                                                         "✅ dans ton plan" if self._in_plan(r) else "",
-                                                         key_reason(r)))
+            lines.append("%s <b>%s</b> <i>(%s)</i> · %d/100 %s%s\n      <i>%s</i>" % (
+                r["label"].split()[0], F.esc(r["name"]), F.esc(r["category"]), r["score"], F.bar(r["score"] / 100.0, 5),
+                "  ✅ dans ton plan" if self._in_plan(r) else "", F.esc(key_reason(r))))
         if not data["stocks"]:
             lines.append("   (cours indisponibles pour l'instant)")
         avoid = [r["symbol"] for r in data["crypto"] if r["label"] == "⛔ À éviter"][:8]
         if avoid:
-            lines += ["", "⛔ Cryptos en forte baisse, à éviter pour l'instant : " + ", ".join(avoid)]
-        lines += ["", "Ce classement applique des règles chiffrées (tendance, élan, point d'entrée, risque). "
-                  "Ce n'est pas une prédiction. Détail d'un actif : /info SYMBOLE"]
+            lines += ["", "⛔ <b>À éviter pour l'instant</b> (forte baisse) : " + F.esc(", ".join(avoid))]
+        lines += ["", "<i>Règles chiffrées (tendance, élan, point d'entrée, risque) : ce n'est pas une prédiction. "
+                  "Détail d'un actif : /info SYMBOLE</i>"]
         return "\n".join(lines)
 
     def summary_buttons(self, data):
@@ -345,13 +348,16 @@ class Radar:
 
     def ranking_text(self, data, kind, n=15):
         rows = data["crypto"] if kind == "crypto" else data["stocks"]
-        title = "🪙 Classement crypto (%d)" % len(rows) if kind == "crypto" else "📈 Classement actions & ETF (%d)" % len(rows)
+        title = ("🪙 <b>Classement crypto</b> (%d)" if kind == "crypto" else "📈 <b>Classement actions &amp; ETF</b> (%d)") % len(rows)
         lines = [title, ""]
         for i, r in enumerate(rows[:n], 1):
-            name = r["symbol"] if kind == "crypto" else "%s (%s)" % (r["name"], r["symbol"])
-            lines.append("%d. %s — %d/100 %s%s" % (i, name, r["score"], r["label"], " ✅" if self._in_plan(r) else ""))
+            name = r["symbol"] if kind == "crypto" else r["name"]
+            lines.append("%d. %s <b>%s</b> · %d/100%s" % (i, r["label"].split()[0], F.esc(name), r["score"],
+                                                       " ✅" if self._in_plan(r) else ""))
         if len(rows) > n:
-            lines.append("… et %d autres. Détail : /info SYMBOLE" % (len(rows) - n))
+            lines.append("<i>… et %d autres.</i>" % (len(rows) - n))
+        lines.append("\n<i>Légende : ⭐ intéressant · 👀 à surveiller · 😐 neutre · ⛔ à éviter · 💧 peu liquide · ✅ dans ton plan. "
+                     "Détail : /info SYMBOLE</i>")
         return "\n".join(lines)
 
     def info_text(self, data, symbol):
@@ -359,18 +365,20 @@ class Radar:
         for r in (data or {}).get("crypto", []) + (data or {}).get("stocks", []):
             if r["symbol"].upper() == symbol or (r["kind"] != "crypto" and r["symbol"].split(".")[0].upper() == symbol):
                 i = r["ind"]
-                name = r["symbol"] if r["kind"] == "crypto" else "%s (%s) — %s" % (r["name"], r["symbol"], r["category"])
-                lines = ["🔎 %s" % name, "Note : %d/100 — %s" % (r["score"], r["label"]), ""]
-                lines += ["• " + x for x in r["reasons"]]
-                lines += ["", "Prix : %s %s" % (_fmt(i["price"]), r.get("currency") or "€"),
-                          "30 jours : %+.1f %% · 90 jours : %+.1f %%" % (i["r30"] * 100, i["r90"] * 100),
-                          "Depuis son plus haut sur 1 an : %+.1f %%" % (i["from_high"] * 100),
-                          "Volatilité : %.0f %%/an" % (i["vol"] * 100)]
+                name = (F.b(r["symbol"]) if r["kind"] == "crypto" else
+                        "%s <i>(%s · %s)</i>" % (F.b(r["name"]), F.esc(r["symbol"]), F.esc(r["category"])))
+                lines = ["🔎 %s" % name, "%s · <b>%d/100</b> %s" % (F.esc(r["label"]), r["score"], F.bar(r["score"] / 100.0)), ""]
+                lines += ["• " + F.esc(x) for x in r["reasons"]]
+                lines += ["", "💶 Prix : <b>%s</b>" % (F.price(i["price"]) if not r.get("currency") or r.get("currency") == "EUR"
+                                                       else "%s %s" % (_fmt(i["price"]), F.esc(r["currency"]))),
+                          "📅 30 jours : <b>%s</b> · 90 jours : <b>%s</b>" % (F.pct(i["r30"] * 100), F.pct(i["r90"] * 100)),
+                          "⛰ Depuis son plus haut sur 1 an : %s" % F.pct(i["from_high"] * 100),
+                          "🌊 Volatilité : %.0f %%/an" % (i["vol"] * 100)]
                 if r["kind"] != "crypto":
-                    lines.append("Dans l'appli Revolut, cherche : %s" % r["search"])
+                    lines.append("📱 Dans l'appli Revolut, cherche : <b>%s</b>" % F.esc(r["search"]))
                 lines.append("Dans ton plan : %s" % ("oui ✅" if self._in_plan(r) else "non"))
                 return "\n".join(lines), r
-        return "%s n'est pas dans la dernière analyse du radar." % symbol, None
+        return "🤔 %s n'est pas dans la dernière analyse du radar." % F.esc(symbol), None
 
 
 def _fmt(x):

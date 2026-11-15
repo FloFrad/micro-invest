@@ -5,6 +5,7 @@ import threading
 import time
 
 from . import config as config_mod
+from . import fmt as F
 from .broker import (BrokerError, InsufficientFunds, MarketData, PaperBroker,
                      RevolutXBroker, normalize_fill)
 from .store import Store
@@ -15,11 +16,27 @@ JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"
 
 
 def eur(x):
-    return ("%.2f €" % x).replace(".", ",")
+    return F.eur(x)
 
 
 def pct(x):
-    return ("%+.1f %%" % x).replace(".", ",")
+    return F.pct(x)
+
+
+def hint_for(refus):
+    """Conseil « que faire » pour une raison de refus."""
+    r = refus.lower()
+    if "solde insuffisant" in r:
+        return "dépose des euros sur Revolut X (exchange.revolut.com → Déposer)."
+    if "budget du mois" in r:
+        return "rien : les achats reprendront le 1er du mois. (Ou /regler budget_crypto …)"
+    if "gelés" in r:
+        return "attendre, ou bouton « ▶️ Reprendre » si tu veux racheter quand même."
+    if "pause" in r:
+        return "bouton « ▶️ Reprendre »."
+    if "minimum" in r:
+        return "augmente le montant (/regler budget_crypto …)."
+    return "rien de spécial : je réessaierai au prochain créneau."
 
 
 def month_start(now=None):
@@ -241,28 +258,34 @@ class Engine:
             refus = self.check_buy(asset, amount, automatic)
             if refus:
                 self.log("warn", "Achat %s %s refusé : %s" % (eur(amount), asset, refus))
-                self.notify("⛔ Achat de %s de %s annulé\nRaison : %s" % (eur(amount), asset, refus))
+                self.notify("⛔ <b>Achat annulé</b> — %s de %s\n<b>Pourquoi</b> : %s\n➡️ <b>Que faire</b> : %s" % (
+                    eur(amount), F.esc(asset), F.esc(refus), F.esc(hint_for(refus))))
                 return None
             try:
                 o = self.broker.market_order(asset, "buy", quote_eur=amount)
             except InsufficientFunds as e:
-                self.notify("⛔ Revolut X refuse l'achat : solde insuffisant.\n%s" % e)
+                self.notify("⛔ <b>Achat refusé par Revolut X</b> : solde insuffisant.\n➡️ <b>Que faire</b> : dépose des euros "
+                            "sur Revolut X.\n<i>%s</i>" % F.esc(e))
                 self.log("warn", "Fonds insuffisants : %s" % e)
                 return None
             except BrokerError as e:
-                self.notify("⚠️ Échec de l'achat %s : %s" % (asset, e))
+                self.notify("⚠️ <b>Échec de l'achat %s</b>\n<i>%s</i>\n➡️ Rien n'a été dépensé. Je réessaierai au prochain créneau." % (
+                    F.esc(asset), F.esc(e)))
                 self.log("error", "Échec achat %s : %s" % (asset, e))
                 return None
             qty, spent = normalize_fill(o, asset, "buy", self.cfg["quote"])
             if qty <= 0:
-                self.notify("⚠️ Ordre %s non exécuté (statut : %s)" % (asset, o["status"]))
+                self.notify("⚠️ <b>Ordre %s non exécuté</b> (statut : %s). Rien n'a été dépensé." % (F.esc(asset), F.esc(o["status"])))
                 self.log("error", "Ordre non exécuté %s : %s" % (asset, o))
                 return None
             self.store.add_trade(asset, "buy", qty, spent, o["price"], reason, o["id"])
             bs = self.budget_status()
-            msg = "✅ Acheté %s de %s (%.8f %s à %s)\nMotif : %s\nBudget du mois : %s / %s" % (
-                eur(spent), asset, qty, asset, eur(o["price"]), reason, eur(bs["spent"]), eur(bs["monthly"]))
-            self.log("info", msg.replace("\n", " | "))
+            tag = " · 🧪 simulation" if self.mode == "paper" else ""
+            msg = ("✅ <b>Achat effectué</b>%s\n<b>%s de %s</b>\n%s %s à %s\n💡 %s\n\n💶 Budget de %s\n%s %s / %s" % (
+                tag, eur(spent), F.esc(asset), F.num(qty, 8), F.esc(asset), F.price(o["price"]), F.esc(reason),
+                F.month_name(self.clock()), F.bar(bs["spent"] / bs["monthly"] if bs["monthly"] else 1),
+                eur(bs["spent"]), eur(bs["monthly"])))
+            self.log("info", "Acheté %s de %s (%s)" % (eur(spent), asset, reason))
             self.notify(msg)
             return o
 
@@ -271,42 +294,45 @@ class Engine:
         with self.lock:
             pos = self.store.positions().get(asset)
             if not pos or pos["qty"] <= 0:
-                self.notify("⛔ Vente %s annulée : aucune position détenue par l'outil." % asset)
+                self.notify("⛔ <b>Vente %s annulée</b> : aucune position détenue par l'outil." % F.esc(asset))
                 return None
             try:
                 price = self.prices(max_age=0).get(asset, {}).get("bid") or 0
                 avail = self.broker.balances().get(asset, 0.0)
             except BrokerError as e:
-                self.notify("⚠️ Vente %s impossible : %s" % (asset, e))
+                self.notify("⚠️ <b>Vente %s impossible</b>\n<i>%s</i>" % (F.esc(asset), F.esc(e)))
                 return None
             if price < pos["avg"] * 1.005:
-                self.notify("⛔ Vente %s annulée : le prix (%s) est repassé sous ton prix moyen (%s). "
-                            "L'outil ne vend jamais à perte." % (asset, eur(price), eur(pos["avg"])))
+                self.notify("⛔ <b>Vente %s annulée</b>\nLe prix (%s) est repassé sous ton prix moyen (%s).\n"
+                            "🛡 L'outil ne vend jamais à perte." % (F.esc(asset), F.price(price), F.price(pos["avg"])))
                 self.log("warn", "Vente %s refusée : prix sous le coût moyen" % asset)
                 return None
             qty = min(pos["qty"] * fraction_pct / 100.0, avail)
             if qty <= 0:
-                self.notify("⛔ Vente %s annulée : solde %s introuvable sur Revolut X." % (asset, asset))
+                self.notify("⛔ <b>Vente %s annulée</b> : solde %s introuvable sur Revolut X." % (F.esc(asset), F.esc(asset)))
                 return None
             try:
                 o = self.broker.market_order(asset, "sell", base_qty=qty)
             except BrokerError as e:
-                self.notify("⚠️ Échec de la vente %s : %s" % (asset, e))
+                self.notify("⚠️ <b>Échec de la vente %s</b>\n<i>%s</i>" % (F.esc(asset), F.esc(e)))
                 self.log("error", "Échec vente %s : %s" % (asset, e))
                 return None
             q, received = normalize_fill(o, asset, "sell", self.cfg["quote"])
             if q <= 0:
-                self.notify("⚠️ Vente %s non exécutée (statut : %s)" % (asset, o["status"]))
+                self.notify("⚠️ <b>Vente %s non exécutée</b> (statut : %s)" % (F.esc(asset), F.esc(o["status"])))
                 return None
             self.store.add_trade(asset, "sell", q, received, o["price"], reason, o["id"])
             gain = received - pos["avg"] * q
-            msg = "💰 Vendu %.8f %s pour %s (gain ≈ %s)\nMotif : %s" % (q, asset, eur(received), eur(gain), reason)
-            self.log("info", msg.replace("\n", " | "))
+            tag = " · 🧪 simulation" if self.mode == "paper" else ""
+            msg = "💰 <b>Vente effectuée</b>%s\n%s %s → <b>%s</b>\nGain encaissé ≈ <b>%s</b>\n💡 %s" % (
+                tag, F.num(q, 8), F.esc(asset), eur(received), F.signed_eur(gain), F.esc(reason))
+            self.log("info", "Vendu %s %s pour %s (gain %s)" % (q, asset, eur(received), eur(gain)))
             self.notify(msg)
             return o
 
     # ------------------------------------------------------------- validations
     def request_approval(self, kind, payload, text, hours=None):
+        """Pose une question avec boutons. `text` est du HTML Telegram (valeurs déjà échappées)."""
         hours = hours or self.cfg["approval_timeout_hours"]
         for a in self.store.pending_approvals():
             if a["kind"] == kind and a["payload"].get("asset") == payload.get("asset"):
@@ -317,10 +343,11 @@ class Engine:
             buttons = [[("✅ Fait (%s)" % eur(amt), "ap:%d:y" % aid), ("⏭ Sauter ce mois", "ap:%d:n" % aid)]]
         else:
             buttons = [[("✅ Oui", "ap:%d:y" % aid), ("❌ Non", "ap:%d:n" % aid)]]
-        msg_id = self.notify("❓ %s\n\n(expire dans %d h)" % (text, hours), buttons)
+        footer = "\n\n⏳ <i>Sans réponse d'ici %s, rien ne sera fait.</i>" % F.when(self.clock() + hours * 3600, self.clock())
+        msg_id = self.notify(text + footer, buttons)
         if msg_id:
             self.store.set_approval(aid, tg_msg=msg_id)
-        self.log("info", "Question posée #%d : %s" % (aid, text.split("\n")[0]))
+        self.log("info", "Question posée #%d : %s" % (aid, F.strip_tags(text.split("\n")[0])))
         return aid
 
     def resolve_approval(self, aid, yes, source="telegram"):
@@ -332,7 +359,7 @@ class Engine:
         p = a["payload"]
         if a["tg_msg"]:
             try:
-                self.notifier.edit(a["tg_msg"], "%s\n\n➡️ %s (%s)" % (a["text"], "Accepté" if yes else "Refusé", source))
+                self.notifier.edit(a["tg_msg"], "%s\n\n➡️ <b>%s</b> (via %s)" % (a["text"], "Accepté" if yes else "Refusé", source))
             except Exception:
                 pass
         if not yes:
@@ -356,7 +383,7 @@ class Engine:
             if a["expires"] < now and self.store.claim_approval(a["id"], "expired"):
                 if a["tg_msg"]:
                     try:
-                        self.notifier.edit(a["tg_msg"], a["text"] + "\n\n⌛ Expiré sans réponse : rien n'a été fait.")
+                        self.notifier.edit(a["tg_msg"], a["text"] + "\n\n⌛ <i>Expiré sans réponse : rien n'a été fait.</i>")
                     except Exception:
                         pass
                 self.log("info", "Question #%d expirée" % a["id"])
@@ -398,11 +425,15 @@ class Engine:
                 return "DCA sauté : outil en pause."
             plan = self.plan_dca()
             if plan["amount"] <= 0:
-                self.notify("ℹ️ DCA de la semaine sauté : budget du mois déjà utilisé.")
+                self.notify("ℹ️ <b>Pas d'achat cette semaine</b> : le budget crypto de %s est déjà utilisé.\n"
+                            "Les achats reprennent le 1er." % F.month_name(self.clock()))
                 return "Budget du mois épuisé."
             if plan["amount"] > self.cfg["budget"]["approval_above_eur"]:
                 self.request_approval("buy", {"asset": plan["asset"], "amount": plan["amount"], "reason": plan["reason"]},
-                                      "Achat exceptionnel proposé : %s de %s\n%s" % (eur(plan["amount"]), plan["asset"], plan["reason"]))
+                                      "🛒 <b>Achat renforcé proposé</b>\n<b>%s de %s</b>\n💡 %s\n\n"
+                                      "<i>C'est plus que l'achat habituel (≈ %s), donc je te demande.</i>" % (
+                                          eur(plan["amount"]), F.esc(plan["asset"]), F.esc(plan["reason"]),
+                                          eur(self.budget_status()["weekly_base"])))
                 return "Achat exceptionnel : validation demandée sur Telegram."
             o = self.buy(plan["asset"], plan["amount"], plan["reason"], automatic=not manual)
             return "Achat exécuté." if o else "Achat refusé (voir message)."
@@ -422,13 +453,14 @@ class Engine:
             self.store.set("frozen", True)
             self.store.set("recovery_notified", False)
             self.log("warn", "Plafond de perte atteint (%s) : achats gelés" % pct(p))
-            self.notify("🧊 Plafond de perte atteint : %s (limite -%s %%).\nTous les achats sont GELÉS. "
-                        "Rien n'est vendu.\nValeur : %s pour %s investis." % (
+            self.notify("🧊 <b>Achats gelés</b> : plafond de perte atteint\nPortefeuille crypto : <b>%s</b> (limite −%s %%)\n"
+                        "Valeur %s pour %s investis.\n\n🛡 Rien n'est vendu. Les achats reprendront quand tu le décideras, "
+                        "ou je te préviendrai quand le portefeuille sera remonté." % (
                             pct(p), s["max_drawdown_pct"], eur(pf["value"]), eur(pf["cost"])),
                         [[("▶️ Reprendre quand même", "cmd:resume_freeze")]])
         elif frozen and not override and p >= -s["resume_above_pct"] and not self.flag("recovery_notified"):
             self.store.set("recovery_notified", True)
-            self.notify("📈 Le portefeuille est remonté à %s. Reprendre les achats ?" % pct(p),
+            self.notify("📈 <b>Le portefeuille est remonté</b> à %s.\nReprendre les achats automatiques ?" % pct(p),
                         [[("▶️ Reprendre", "cmd:resume_freeze")]])
 
     def resume_freeze(self):
@@ -455,9 +487,10 @@ class Engine:
             gain = (r["price"] / r["avg"] - 1) * 100
             self.request_approval("sell", {"asset": r["asset"], "fraction_pct": tp["sell_fraction_pct"],
                                            "reason": "prise de bénéfices (+%.0f %%)" % gain},
-                                  "Prise de bénéfices : %s est à %s au-dessus de ton prix moyen.\n"
-                                  "Vendre %s %% de la position (≈ %s) ?" % (
-                                      r["asset"], pct(gain), tp["sell_fraction_pct"],
+                                  "💰 <b>Prise de bénéfices ?</b>\n%s est à <b>%s</b> au-dessus de ton prix moyen (%s).\n"
+                                  "Vendre %s %% de la position, soit ≈ <b>%s</b> ?\n"
+                                  "<i>🛡 Je ne vends jamais sous ton prix moyen.</i>" % (
+                                      F.esc(r["asset"]), pct(gain), F.price(r["avg"]), tp["sell_fraction_pct"],
                                       eur(r["value"] * tp["sell_fraction_pct"] / 100.0)))
 
     def check_opportunity(self):
@@ -479,9 +512,9 @@ class Engine:
             last[a] = self.clock()
             self.store.set("opp_last", last)
             self.request_approval("buy", {"asset": a, "amount": amount, "reason": "opportunité : -%.1f %% vs moyenne 30 j" % dip},
-                                  "Forte baisse : %s est %.1f %% sous sa moyenne 30 jours.\n"
-                                  "Acheter %s en plus ? (pris sur le budget du mois : reste %s)" % (
-                                      a, dip, eur(amount), eur(bs["remaining"])))
+                                  "📉 <b>Forte baisse sur %s</b>\n%s sous sa moyenne des 30 derniers jours.\n"
+                                  "Acheter <b>%s</b> en plus ?\n<i>Pris sur le budget du mois (reste %s).</i>" % (
+                                      F.esc(a), F.pct(-dip), eur(amount), eur(bs["remaining"])))
             break
 
     # ------------------------------------------------------------------- ETF
@@ -489,12 +522,14 @@ class Engine:
     def stock_targets(self):
         return dict(self.cfg["stocks"]["targets"])
 
-    def stock_label(self, ticker):
+    def stock_label(self, ticker, html=False):
         from .radar import STOCK_INFO
         i = STOCK_INFO.get(ticker)
         if i:
+            if html:
+                return "<b>%s</b> (cherche « %s »)" % (F.esc(i["name"]), F.esc(i["search"]))
             return "%s (cherche « %s »)" % (i["name"], i["search"])
-        return ticker
+        return F.esc(ticker) if html else ticker
 
     def stock_invested(self):
         """Montant investi par ligne du plan actions (anciens achats « ETF » rattachés à la ligne principale)."""
@@ -538,13 +573,12 @@ class Engine:
         total = round(sum(a for _, a in lines), 2)
         self.store.set("etf_month", month_key(self.clock()))
         self.store.set("etf_reminded", False)
-        detail = "\n".join("   • %s : %s" % (self.stock_label(k), eur(a)) for k, a in lines)
+        detail = "\n".join("• %s : <b>%s</b>" % (self.stock_label(k, html=True), eur(a)) for k, a in lines)
         self.request_approval("etf", {"asset": "ETF", "amount": total, "lines": lines},
-                              "📈 Achats actions/ETF du mois (semi-auto) — total %s\n"
-                              "1. Ouvre l'appli Revolut → Investir\n"
-                              "2. Achète :\n%s\n"
-                              "3. Reviens ici et appuie sur « Fait »\n"
-                              "(Autre montant ? Envoie /etf 12.50)" % (eur(total), detail), hours=72)
+                              "📈 <b>Achats actions/ETF de %s</b> — total %s\n\n"
+                              "Dans l'appli Revolut → <b>Investir</b>, achète :\n%s\n\n"
+                              "Puis appuie sur « ✅ Fait ».\n<i>Autre montant : /etf 12.50</i>" % (
+                                  F.month_name(self.clock()), eur(total), detail), hours=72)
 
     def record_etf(self, amount, lines=None):
         if not lines:
@@ -562,14 +596,14 @@ class Engine:
         if bs["etf_spent"] > bs["etf_monthly"] + 1e-9:
             warn = "\n⚠️ Au-dessus du budget actions du mois (%s)." % eur(bs["etf_monthly"])
         self.log("info", "Achat actions/ETF enregistré : %s" % eur(amount))
-        self.notify("✅ Achat actions/ETF de %s enregistré.%s\n\nQuestion : quelle est la valeur totale actuelle de tes "
-                    "actions/ETF dans Revolut ? Réponds par exemple : /etfvaleur 123.45" % (eur(amount), warn))
+        self.notify("✅ <b>Achat actions/ETF enregistré</b> : %s%s\n\n❓ Quelle est la valeur totale actuelle de tes "
+                    "actions/ETF dans l'appli Revolut ?\nRéponds par exemple : <code>/etfvaleur 123.45</code>" % (eur(amount), warn))
 
     def set_etf_value(self, value):
         self.store.set("etf_value", {"value": float(value), "ts": self.clock()})
         invested = sum(t["eur"] for t in self.store.trades(10000, kind="etf"))
         p = (value / invested - 1) * 100 if invested > 0 else 0
-        return "ETF : valeur %s pour %s investis (%s)." % (eur(value), eur(invested), pct(p))
+        return "📈 <b>Actions/ETF</b> : valeur %s pour %s investis (<b>%s</b>)." % (eur(value), eur(invested), pct(p))
 
     # ------------------------------------------------------------- planning
     def next_dca_ts(self):
@@ -616,7 +650,8 @@ class Engine:
                 self.log("error", "DCA impossible (nouvel essai dans 15 min) : %s" % e)
                 if not self.store.get("dca_fail_notified") == week:
                     self.store.set("dca_fail_notified", week)
-                    self.notify("⚠️ Achat de la semaine retardé : Revolut X injoignable. Nouvel essai toutes les 15 min.\n%s" % e)
+                    self.notify("⚠️ <b>Achat de la semaine retardé</b> : Revolut X injoignable.\n"
+                                "➡️ Rien à faire : je réessaie toutes les 15 min.\n<i>%s</i>" % F.esc(e))
 
         # ETF mensuel (semi-auto)
         e = self.cfg["etf"]
@@ -628,7 +663,8 @@ class Engine:
                 for a in self.store.pending_approvals():
                     if a["kind"] == "etf" and now - a["ts"] > 24 * 3600:
                         self.store.set("etf_reminded", True)
-                        self.notify("⏰ Rappel : l'achat ETF du mois attend toujours (message ci-dessus).")
+                        self.notify("⏰ <b>Rappel</b> : les achats actions/ETF du mois attendent toujours.\n"
+                                    "Bouton « ❓ Questions » pour les retrouver.")
 
         # Radar quotidien (en arrière-plan : 2 à 4 min)
         r = self.cfg["radar"]
@@ -641,7 +677,7 @@ class Engine:
         w = self.cfg["weekly_report"]
         if t.tm_wday == w["weekday"] and t.tm_hour >= w["hour"] and self.store.get("report_week") != week:
             self.store.set("report_week", week)
-            self.notify("🗓 Rapport de la semaine\n\n" + self.status_text())
+            self.notify(self.weekly_report_text())
             rd = self.get_radar().latest()
             if r["enabled"] and rd:
                 self.notify(self.get_radar().summary_text(rd), self.get_radar().summary_buttons(rd))
@@ -651,70 +687,152 @@ class Engine:
         pf = self.portfolio()
         bs = self.budget_status()
         if self.flag("frozen") and not self.flag("freeze_override"):
-            etat = "🧊 GELÉ (plafond de perte)"
+            etat = "🧊 Gelé (plafond de perte)"
         elif self.flag("paused"):
-            etat = "⏸ EN PAUSE"
+            etat = "⏸️ En pause"
         else:
-            etat = "▶️ ACTIF"
-        nd = time.localtime(self.next_dca_ts())
-        lines = [
-            "Mode : %s — État : %s" % (self.mode_label(), etat),
-            "Crypto : %s pour %s investis (%s)" % (eur(pf["value"]), eur(pf["cost"]), pct(pf["pnl_pct"])),
-            "Budget crypto du mois : %s / %s" % (eur(bs["spent"]), eur(bs["monthly"])),
-            "Budget ETF du mois : %s / %s" % (eur(bs["etf_spent"]), eur(bs["etf_monthly"])),
-            "Prochain DCA : %s %s à %dh" % (JOURS[nd.tm_wday], time.strftime("%d/%m", nd), nd.tm_hour),
-        ]
+            etat = "▶️ Actif"
+        mode = "🧪 Simulation" if self.mode == "paper" else "💶 Réel"
+        lines = ["📊 <b>Statut</b> · %s · %s" % (mode, etat), ""]
+        if pf["cost"] > 0:
+            lines.append("💼 <b>Crypto</b> : <b>%s</b> (%s)" % (eur(pf["value"]), pct(pf["pnl_pct"])))
+            lines.append("      investi %s · %s %s" % (eur(pf["cost"]), "gain" if pf["pnl"] >= 0 else "perte",
+                                                     F.signed_eur(pf["pnl"])))
+        else:
+            lines.append("💼 <b>Crypto</b> : pas encore d'achat")
+        inv = sum(self.stock_invested().values())
+        ev = self.store.get("etf_value")
+        if inv or ev:
+            lines.append("📈 <b>Actions/ETF</b> : %s investis%s" % (eur(inv), (" · valeur déclarée %s" % eur(ev["value"])) if ev else ""))
+        m = F.month_name(self.clock())
+        lines += ["", "💶 <b>Budget de %s</b>" % m,
+                  "<code>Crypto  </code> %s %s / %s" % (F.bar(bs["spent"] / bs["monthly"] if bs["monthly"] else 0),
+                                                       eur(bs["spent"]), eur(bs["monthly"])),
+                  "<code>Actions </code> %s %s / %s" % (F.bar(bs["etf_spent"] / bs["etf_monthly"] if bs["etf_monthly"] else 0),
+                                                       eur(bs["etf_spent"]), eur(bs["etf_monthly"])), ""]
+        lines.append("🗓 <b>Prochain achat</b> : %s (≈ %s)" % (F.when(self.next_dca_ts(), self.clock()), eur(bs["weekly_base"])))
         try:
-            lines.append("Solde %s dispo sur Revolut X : %s" % (self.cfg["quote"], eur(self.broker.balances().get(self.cfg["quote"], 0))))
+            lines.append("🏦 <b>Solde Revolut X</b> : %s" % eur(self.broker.balances().get(self.cfg["quote"], 0)))
         except BrokerError as e:
-            lines.append("Solde Revolut X illisible : %s" % e)
+            lines.append("🏦 Solde Revolut X illisible : <i>%s</i>" % F.esc(e))
         n = len(self.store.pending_approvals())
         if n:
-            lines.append("❓ %d question(s) en attente" % n)
+            lines.append("\n❓ <b>%d question%s en attente</b> → bouton « ❓ Questions »" % (n, "s" if n > 1 else ""))
         return "\n".join(lines)
 
     def portfolio_text(self):
         pf = self.portfolio()
-        lines = ["Actif | Valeur | P/L | Poids / cible"]
+        rows = [["Actif", "Valeur", "Gain", "Poids/cible"]]
         for r in pf["rows"]:
             if r["qty"] <= 0 and r["target_pct"] <= 0:
                 continue
-            lines.append("%s | %s | %s | %.0f %% / %.0f %%" % (
-                r["asset"], eur(r["value"]), pct(r["pnl_pct"]) if r["cost"] else "—", r["weight_pct"], r["target_pct"]))
-        lines.append("Total : %s (%s)" % (eur(pf["value"]), pct(pf["pnl_pct"])))
+            rows.append([r["asset"], F.teur(r["value"]), F.tpct(r["pnl_pct"]) if r["cost"] else "—",
+                         "%.0f/%.0f%%" % (r["weight_pct"], r["target_pct"])])
+        lines = ["💼 <b>Portefeuille crypto</b> — <b>%s</b>%s" % (
+            eur(pf["value"]), (" (%s)" % pct(pf["pnl_pct"])) if pf["cost"] else "")]
+        lines.append(F.pre(F.table(rows)))
+        if pf["realized"]:
+            lines.append("Gains déjà encaissés : <b>%s</b>" % F.signed_eur(pf["realized"]))
         inv = self.stock_invested()
         if inv:
-            lines.append("\nActions/ETF (achats manuels) :")
-            for k, v in sorted(inv.items(), key=lambda kv: -kv[1]):
-                lines.append("%s | %s investis" % (k, eur(v)))
+            srows = [[k.split(".")[0], F.teur(v)] for k, v in sorted(inv.items(), key=lambda kv: -kv[1])]
+            lines.append("\n📈 <b>Actions/ETF</b> (achats manuels, montants investis)")
+            lines.append(F.pre(F.table(srows)))
         ev = self.store.get("etf_value")
         if ev:
-            lines.append("Valeur actions/ETF déclarée : %s" % eur(ev["value"]))
+            lines.append("Valeur déclarée : <b>%s</b> (le %s)" % (eur(ev["value"]), time.strftime("%d/%m", time.localtime(ev["ts"]))))
         return "\n".join(lines)
 
-    def history_text(self, n=10):
+    def history_text(self, n=12):
         rows = self.store.trades(n)
         if not rows:
-            return "Aucune opération pour l'instant."
-        out = []
+            return "📜 Aucune opération pour l'instant."
+        table = []
         for t in rows:
-            d = time.strftime("%d/%m %H:%M", time.localtime(t["ts"]))
+            d = time.strftime("%d/%m %Hh%M", time.localtime(t["ts"]))
             if t["kind"] == "etf":
-                out.append("%s ETF achat %s" % (d, eur(t["eur"])))
+                table.append([d, "Action", t["asset"].split(".")[0][:6], F.teur(t["eur"])])
             else:
-                out.append("%s %s %s %s (%s)" % (d, "Achat" if t["side"] == "buy" else "Vente", t["asset"], eur(t["eur"]), t["reason"][:40]))
-        return "\n".join(out)
+                table.append([d, "Achat" if t["side"] == "buy" else "Vente", t["asset"][:6], F.teur(t["eur"])])
+        return "📜 <b>Dernières opérations</b>%s\n%s" % (" · 🧪 simulation" if self.mode == "paper" else "",
+                                                       F.pre(F.table(table, ["<", "<", "<", ">"])))
+
+    def weekly_report_text(self):
+        now = self.clock()
+        pf = self.portfolio()
+        week_ago = now - 7 * 86400
+        snaps = self.store.snapshots(week_ago - 3600)
+        lines = ["🗓 <b>Ta semaine</b> (%s → %s)" % (time.strftime("%d/%m", time.localtime(week_ago)),
+                                                   time.strftime("%d/%m", time.localtime(now))), ""]
+        if pf["cost"] > 0:
+            lines.append("💼 Crypto : <b>%s</b> (%s depuis le début)" % (eur(pf["value"]), pct(pf["pnl_pct"])))
+            if snaps:
+                first = snaps[0]
+                # variation hors nouveaux achats : (valeur - investi) maintenant vs il y a 7 jours
+                delta = (pf["value"] - pf["cost"]) - (first["value"] - first["cost"])
+                lines.append("      cette semaine : <b>%s</b> (hors achats)" % F.signed_eur(delta))
+        buys = [t for t in self.store.trades(200) if t["ts"] >= week_ago]
+        if buys:
+            spent = sum(t["eur"] for t in buys if t["side"] == "buy")
+            lines.append("🛒 %d opération%s · %s investis (%s)" % (
+                len(buys), "s" if len(buys) > 1 else "", eur(spent),
+                ", ".join(sorted(set(t["asset"].split(".")[0] for t in buys)))))
+        else:
+            lines.append("🛒 Aucune opération cette semaine")
+        moves = []
+        for a in self.assets:
+            try:
+                c = self.market.daily_closes(a, 30)
+                if len(c) >= 8 and c[-8]:
+                    moves.append((c[-1] / c[-8] - 1, a))
+            except BrokerError:
+                pass
+        if moves:
+            moves.sort()
+            best, worst = moves[-1], moves[0]
+            lines.append("🏆 Meilleure : <b>%s</b> %s · 📉 Moins bonne : <b>%s</b> %s (sur 7 jours)" % (
+                best[1], pct(best[0] * 100), worst[1], pct(worst[0] * 100)))
+        bs = self.budget_status()
+        lines += ["", "💶 Budget de %s : %s %s / %s" % (F.month_name(now), F.bar(bs["spent"] / bs["monthly"] if bs["monthly"] else 0),
+                                                      eur(bs["spent"]), eur(bs["monthly"])),
+                  "🗓 Prochain achat : %s" % F.when(self.next_dca_ts(), now)]
+        n = len(self.store.pending_approvals())
+        if n:
+            lines.append("❓ %d question%s en attente" % (n, "s" if n > 1 else ""))
+        return "\n".join(lines)
 
     def _radar_state(self):
         from .radar import key_reason
         rd = self.store.get("radar")
         if not rd:
             return None
-        slim = lambda rows: [{"symbol": r["symbol"], "name": r["name"], "score": r["score"], "label": r["label"],
-                              "reason": key_reason(r), "kind": r["kind"],
-                              "r90": r["ind"]["r90"], "vol": r["ind"]["vol"]} for r in rows[:12]]
+
+        def slim(rows):
+            return [{"symbol": r["symbol"], "name": r["name"], "score": r["score"], "label": r["label"],
+                     "reason": key_reason(r), "reasons": r["reasons"], "kind": r["kind"],
+                     "category": r.get("category", "Crypto"), "search": r.get("search", ""),
+                     "r30": r["ind"]["r30"], "r90": r["ind"]["r90"], "from_high": r["ind"]["from_high"],
+                     "vol": r["ind"]["vol"]} for r in rows[:40]]
         return {"ts": rd["ts"], "crypto": slim(rd["crypto"]), "stocks": slim(rd["stocks"]),
                 "n_crypto": len(rd["crypto"]), "n_stocks": len(rd["stocks"])}
+
+    def next_etf_ts(self):
+        """Date du prochain rappel actions/ETF."""
+        e = self.cfg["etf"]
+        now = self.clock()
+        t = time.localtime(now)
+        if self.store.get("etf_month") == month_key(now):  # déjà envoyé ce mois-ci → mois prochain
+            return time.mktime((t.tm_year, t.tm_mon + 1, e["day_of_month"], e["hour"], 0, 0, 0, 0, -1))
+        cand = time.mktime((t.tm_year, t.tm_mon, e["day_of_month"], e["hour"], 0, 0, 0, 0, -1))
+        return max(cand, now)  # date passée mais rappel pas encore envoyé : il part tout de suite
+
+    def version_info(self):
+        try:
+            import json
+            with open(os.path.join(self.base_dir, "data", "version.json")) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
 
     def state(self):
         """Toutes les données pour l'interface web."""
@@ -728,7 +846,7 @@ class Engine:
             "paused": bool(self.flag("paused")),
             "frozen": bool(self.flag("frozen")) and not self.flag("freeze_override"),
             "portfolio": pf, "budget": self.budget_status(), "balances": bal,
-            "approvals": [{"id": a["id"], "kind": a["kind"], "text": a["text"], "expires": a["expires"]}
+            "approvals": [{"id": a["id"], "kind": a["kind"], "text": F.strip_tags(a["text"]), "expires": a["expires"]}
                           for a in self.store.pending_approvals()],
             "trades": self.store.trades(30),
             "events": self.store.events(20),
@@ -738,10 +856,17 @@ class Engine:
                     "invested": sum(t["eur"] for t in self.store.trades(10000, kind="etf")),
                     "targets": self.stock_targets(), "by_line": self.stock_invested()},
             "radar": self._radar_state(),
+            "next_etf": self.next_etf_ts(),
+            "version": self.version_info(),
+            "stock_plan": self.stock_plan(),
+            "stock_labels": {k: self.stock_label(k) for k in self.stock_targets()},
             "config": {
                 "budget": self.cfg["budget"], "targets": self.cfg["dca"]["targets"],
                 "dca_day": JOURS[self.cfg["dca"]["weekday"]], "dca_hour": self.cfg["dca"]["hour"],
                 "max_drawdown_pct": self.cfg["safety"]["max_drawdown_pct"],
                 "take_profit": self.cfg["take_profit"],
+                "dip_threshold_pct": self.cfg["dca"]["dip_threshold_pct"],
+                "etf_day": self.cfg["etf"]["day_of_month"], "radar_hour": self.cfg["radar"]["hour"],
+                "weekly_base": self.budget_status()["weekly_base"],
             },
         }

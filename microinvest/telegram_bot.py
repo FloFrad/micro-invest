@@ -10,13 +10,14 @@ import urllib.request
 
 from . import config as config_mod
 from . import ed25519_pure
+from . import fmt as F
 
 log = logging.getLogger("telegram")
 
 # Clavier permanent en bas de l'écran
-KEYBOARD = [["📊 Statut", "💼 Portefeuille"], ["🛒 Acheter", "❓ Questions"], ["⏸ Pause", "▶️ Reprendre"], ["⚙️ Menu"]]
+KEYBOARD = [["📊 Statut", "💼 Portefeuille"], ["🛒 Acheter", "❓ Questions"], ["⏸️ Pause", "▶️ Reprendre"], ["⚙️ Menu"]]
 KEY_TO_CMD = {"📊 Statut": "/statut", "💼 Portefeuille": "/portefeuille", "🛒 Acheter": "/acheter",
-              "❓ Questions": "/questions", "⏸ Pause": "/pause", "▶️ Reprendre": "/reprendre", "⚙️ Menu": "/menu"}
+              "❓ Questions": "/questions", "⏸ Pause": "/pause", "⏸️ Pause": "/pause", "▶️ Reprendre": "/reprendre", "⚙️ Menu": "/menu"}
 
 MENU = [
     [("🔭 Radar (conseils)", "m:/radar"), ("📈 Plan actions/ETF", "m:/actions")],
@@ -37,21 +38,21 @@ BOT_COMMANDS = [
     ("version", "Version installée"), ("mode", "Simulation ou réel"), ("aide", "Aide"),
 ]
 
-AIDE = """🤖 Micro-invest — aide
+AIDE = """🤖 <b>Micro-invest — aide</b>
 
-Utilise les boutons en bas de l'écran, ou « ⚙️ Menu » pour tout le reste.
+Les boutons en bas de l'écran font l'essentiel. « ⚙️ Menu » donne accès à tout le reste.
 
-Commandes avec une valeur :
-/etf 15 — déclarer un achat ETF de 15 €
-/etfvaleur 230.50 — valeur actuelle de ta ligne ETF
-/regler budget_crypto 40 — changer un réglage (liste : /reglages)
-/cible SOL 12 — changer le poids d'une crypto (0 = la retirer)
-/cible_action NVDA 20 — poids d'une action/ETF dans ton plan (0 = la retirer)
-/info SOL — analyse détaillée d'un actif par le radar
-/radar crypto · /radar actions · /radar maj — classements, nouvelle analyse
-/cleapi TA_CLE — enregistrer la clé API Revolut X (message effacé)
-/depot proprietaire/depot [jeton] — dépôt GitHub des mises à jour (message effacé)
-/mode reel · /mode simu — changer de mode"""
+<b>Commandes avec une valeur</b>
+<code>/etf 15</code> — déclarer 15 € d'achats actions/ETF
+<code>/etfvaleur 230.50</code> — valeur actuelle de tes actions/ETF
+<code>/regler budget_crypto 40</code> — changer un réglage (liste : /reglages)
+<code>/cible SOL 12</code> — poids d'une crypto (0 = la retirer)
+<code>/cible_action NVDA 20</code> — poids d'une action/ETF (0 = la retirer)
+<code>/info SOL</code> — analyse détaillée d'un actif
+<code>/radar crypto</code> · <code>/radar actions</code> · <code>/radar maj</code> — classements, nouvelle analyse
+<code>/cleapi TA_CLE</code> — clé API Revolut X (message effacé)
+<code>/depot proprietaire/depot</code> — dépôt GitHub des mises à jour
+<code>/mode reel</code> · <code>/mode simu</code> — changer de mode"""
 
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
@@ -153,6 +154,19 @@ class TelegramBot:
         self._busy = threading.Lock()
 
     # ------------------------------------------------------- notifier (moteur)
+    def _send_html(self, method, params):
+        """Envoie en HTML ; si Telegram refuse la mise en forme, renvoie le même message en texte simple."""
+        params = dict(params, parse_mode="HTML")
+        try:
+            return self.api(self.token, method, params)
+        except TelegramError as e:
+            if "parse" not in str(e).lower() and "entit" not in str(e).lower():
+                raise
+            log.warning("Mise en forme refusée par Telegram (%s) : envoi en texte simple", e)
+            params.pop("parse_mode")
+            params["text"] = F.strip_tags(params["text"])
+            return self.api(self.token, method, params)
+
     def notify(self, text, buttons=None, keyboard=False):
         params = {"chat_id": self.chat_id, "text": text[:4000], "disable_web_page_preview": True}
         if buttons:
@@ -160,11 +174,11 @@ class TelegramBot:
         elif keyboard:
             params["reply_markup"] = {"keyboard": [[{"text": t} for t in row] for row in KEYBOARD],
                                       "resize_keyboard": True, "is_persistent": True}
-        res = self.api(self.token, "sendMessage", params)
+        res = self._send_html("sendMessage", params)
         return res.get("message_id") if isinstance(res, dict) else None
 
     def edit(self, msg_id, text):
-        self.api(self.token, "editMessageText", {"chat_id": self.chat_id, "message_id": msg_id, "text": text[:4000]})
+        self._send_html("editMessageText", {"chat_id": self.chat_id, "message_id": msg_id, "text": text[:4000]})
 
     def register_commands(self):
         try:
@@ -199,7 +213,7 @@ class TelegramBot:
                     except Exception as e:
                         log.exception("Erreur en traitant un message Telegram")
                         try:
-                            self.notify("⚠️ Erreur interne : %s" % e)
+                            self.notify("⚠️ Erreur interne : %s" % F.esc(e))
                         except Exception:
                             pass
             except TelegramError as e:
@@ -256,7 +270,7 @@ class TelegramBot:
         if cmd in ("/start", "/aide", "/help"):
             return {"text": AIDE, "keyboard": True}
         if cmd == "/menu":
-            return ("⚙️ Menu — que veux-tu faire ?", MENU)
+            return ("⚙️ <b>Menu</b> — que veux-tu faire ?", MENU)
         if cmd in ("/statut", "/status"):
             return e.status_text()
         if cmd in ("/portefeuille", "/portfolio"):
@@ -267,30 +281,35 @@ class TelegramBot:
             ev = e.store.events(12)
             if not ev:
                 return "Journal vide."
-            return "📒 Journal\n\n" + "\n".join("%s %s" % (time.strftime("%d/%m %H:%M", time.localtime(x["ts"])), x["text"][:150])
-                                                 for x in ev)
+            icon = {"error": "🔴", "warn": "🟠"}
+            return "📒 <b>Journal</b>\n\n" + "\n".join("%s <code>%s</code> %s" % (
+                icon.get(x["level"], "▫️"), time.strftime("%d/%m %Hh%M", time.localtime(x["ts"])), F.esc(x["text"][:150]))
+                for x in ev)
         if cmd == "/budget":
             bs = e.budget_status()
-            return ("💶 Budget du mois\nCrypto : %.2f / %.2f € (achat hebdo de base ≈ %.2f €)\nETF : %.2f / %.2f €\n\n"
-                    "Changer : /regler budget_crypto 40  ou  /regler budget_etf 10" % (
-                        bs["spent"], bs["monthly"], bs["weekly_base"], bs["etf_spent"], bs["etf_monthly"]))
+            return ("💶 <b>Budget de %s</b>\n<code>Crypto  </code> %s %s / %s\n<code>Actions </code> %s %s / %s\n\n"
+                    "Achat crypto hebdo de base : ≈ %s\nChanger : <code>/regler budget_crypto 40</code> · <code>/regler budget_etf 10</code>" % (
+                        F.month_name(e.clock()), F.bar(bs["spent"] / bs["monthly"] if bs["monthly"] else 0), F.eur(bs["spent"]),
+                        F.eur(bs["monthly"]), F.bar(bs["etf_spent"] / bs["etf_monthly"] if bs["etf_monthly"] else 0),
+                        F.eur(bs["etf_spent"]), F.eur(bs["etf_monthly"]), F.eur(bs["weekly_base"])))
         if cmd in ("/acheter", "/buy"):
             plan = e.plan_dca()
             if plan["amount"] <= 0:
                 return "Budget du mois épuisé : aucun achat possible avant le 1er."
-            return ("Lancer maintenant l'achat de la semaine ?\nPrévu : %.2f € de %s\n%s" % (
-                plan["amount"], plan["asset"], plan["reason"]), [[("✅ Oui", "cmd:dca_now"), ("❌ Non", "cmd:noop")]])
+            return ("🛒 <b>Acheter maintenant ?</b>\nPrévu : <b>%s de %s</b>\n💡 %s" % (
+                F.eur(plan["amount"]), F.esc(plan["asset"]), F.esc(plan["reason"])),
+                [[("✅ Oui, acheter", "cmd:dca_now"), ("❌ Non", "cmd:noop")]])
         if cmd == "/pause":
             e.store.set("paused", True)
             e.log("info", "Pause demandée depuis Telegram")
-            return "⏸ Achats automatiques suspendus. Bouton « ▶️ Reprendre » pour relancer."
+            return "⏸️ <b>Achats automatiques suspendus.</b>\nLes alertes continuent. Bouton « ▶️ Reprendre » pour relancer."
         if cmd in ("/reprendre", "/resume"):
             e.store.set("paused", False)
             e.log("info", "Reprise demandée depuis Telegram")
             if e.flag("frozen") and not e.flag("freeze_override"):
                 return ("▶️ Pause levée, MAIS les achats sont gelés (plafond de perte atteint). Les réactiver ?",
                         [[("▶️ Réactiver les achats", "cmd:resume_freeze")]])
-            return "▶️ Achats automatiques relancés."
+            return "▶️ <b>Achats automatiques relancés.</b> Prochain achat : %s." % F.when(e.next_dca_ts(), e.clock())
         if cmd in ("/questions", "/q"):
             pend = e.store.pending_approvals()
             if not pend:
@@ -298,16 +317,16 @@ class TelegramBot:
             for a in pend:
                 label = "✅ Fait" if a["kind"] == "etf" else "✅ Oui"
                 no = "⏭ Sauter" if a["kind"] == "etf" else "❌ Non"
-                self.notify("❓ " + a["text"], [[(label, "ap:%d:y" % a["id"]), (no, "ap:%d:n" % a["id"])]])
+                self.notify(a["text"], [[(label, "ap:%d:y" % a["id"]), (no, "ap:%d:n" % a["id"])]])
             return None
         if cmd == "/etf":
             if not args:
                 amt = e.cfg["budget"]["monthly_etf_eur"]
                 plan = e.stock_plan()
-                detail = "\n".join("• %s : %.2f €" % (e.stock_label(k), a) for k, a in plan) or "(plan vide)"
-                return ("🧾 Achats actions/ETF prévus ce mois-ci :\n%s\n\nAchète-les dans l'appli Revolut (Investir), "
-                        "puis déclare-les ici.\nAutre montant : /etf 12.50 · Valeur totale : /etfvaleur 230" % detail,
-                        [[("✅ J'ai acheté ces %.2f €" % amt, "cmd:etf_default")]])
+                detail = "\n".join("• %s : <b>%s</b>" % (e.stock_label(k, html=True), F.eur(a)) for k, a in plan) or "(plan vide)"
+                return ("🧾 <b>Achats actions/ETF prévus ce mois-ci</b>\n%s\n\nAchète-les dans l'appli Revolut (Investir), "
+                        "puis déclare-les ici.\n<i>Autre montant : /etf 12.50 · Valeur totale : /etfvaleur 230</i>" % detail,
+                        [[("✅ J'ai acheté ces %s" % F.eur(sum(a for _, a in plan)), "cmd:etf_default")]])
             amt = _num(args)
             if amt is None or amt <= 0 or amt > 10000:
                 return "Usage : /etf 15  (montant en euros acheté dans l'appli Revolut)"
@@ -325,7 +344,8 @@ class TelegramBot:
             if args and args[0].lower() in ("simu", "simulation", "paper"):
                 return ("Repasser en SIMULATION ?", [[("🧪 Oui", "cmd:mode_paper"), ("❌ Annuler", "cmd:noop")]])
             other = ("💶 Passer en réel", "cmd:ask_live") if e.mode == "paper" else ("🧪 Passer en simulation", "cmd:ask_paper")
-            return ("Mode actuel : %s" % e.mode_label(), [[other]])
+            return ("🔁 <b>Mode actuel</b> : %s\n%s" % (e.mode_label(), "<i>Simulation : vrais prix, argent fictif.</i>" if e.mode == "paper"
+                                                           else "<i>Réel : les ordres utilisent ton argent sur Revolut X.</i>"), [[other]])
         if cmd == "/reglages":
             return self.settings_text()
         if cmd == "/regler":
@@ -349,8 +369,8 @@ class TelegramBot:
             return self.set_stock_target(args)
         if cmd == "/web":
             port = e.cfg["web"]["port"]
-            return ("🌐 Interface web (uniquement depuis le Wi-Fi de la maison) :\nhttp://%s:%s\n"
-                    "Identifiant : admin · Mot de passe : celui du setup" % (local_ip(), port))
+            return ("🌐 <b>Interface web</b> (seulement depuis le Wi-Fi de la maison)\nhttp://%s:%s\n"
+                    "Identifiant : <code>admin</code> · Mot de passe : celui du setup" % (local_ip(), port))
         if cmd == "/cle":
             return self.key_info()
         if cmd == "/cleapi":
@@ -368,7 +388,7 @@ class TelegramBot:
                     [[("↩️ Oui", "cmd:rollback"), ("❌ Annuler", "cmd:noop")]])
         if cmd in ("/redemarrer", "/restart"):
             return ("🔄 Redémarrer Micro-invest ?", [[("🔄 Oui", "cmd:restart"), ("❌ Annuler", "cmd:noop")]])
-        return "Commande inconnue. Utilise les boutons ou « ⚙️ Menu »."
+        return "🤔 Je n'ai pas compris. Utilise les boutons en bas, « ⚙️ Menu », ou /aide."
 
     def on_button(self, data):
         e = self.engine
@@ -403,16 +423,16 @@ class TelegramBot:
         if data in ("cmd:mode_live", "cmd:mode_paper"):
             try:
                 e.set_mode("live" if data == "cmd:mode_live" else "paper")
-                return "Mode : %s\n\n%s" % (e.mode_label(), e.status_text())
+                return "🔁 Mode : <b>%s</b>\n\n%s" % (e.mode_label(), e.status_text())
             except Exception as ex:
-                return "Changement de mode impossible : %s" % ex
+                return "❌ Changement de mode impossible : %s" % F.esc(ex)
         if data == "cmd:update":
             return self.start_update()
         if data == "cmd:rollback":
             try:
                 msg = self.updater.rollback()
             except Exception as ex:
-                return "❌ Retour impossible : %s" % ex
+                return "❌ Retour impossible : %s" % F.esc(ex)
             e.log("info", "Retour à la version précédente demandé depuis Telegram")
             self.notify("↩️ %s. Redémarrage…" % msg)
             self.restart()
@@ -429,17 +449,20 @@ class TelegramBot:
     # -------------------------------------------------------------- réglages
     def settings_text(self):
         c = self.engine.cfg
-        lines = ["🔧 Réglages actuels", ""]
+        lines = ["🔧 <b>Réglages</b>", ""]
         for name, (key, conv, lo, hi, desc) in SETTINGS.items():
             v = _get(c, key)
             if key == "dca.weekday":
                 v = JOURS[v]
             elif isinstance(v, bool):
                 v = "oui" if v else "non"
-            lines.append("• %s = %s\n   %s" % (name, v, desc))
+            elif isinstance(v, float) and v.is_integer():
+                v = int(v)
+            lines.append("<b>%s</b> · <code>%s</code>\n   <i>%s</i>" % (F.esc(v), F.esc(name), F.esc(desc)))
         t = c["dca"]["targets"]
-        lines.append("\n🎯 Cibles : " + " · ".join("%s %g" % kv for kv in t.items()))
-        lines.append("\nChanger : /regler nom valeur (ex. /regler budget_crypto 40)\nCibles : /cible SOL 12  (0 = retirer)")
+        lines.append("\n🎯 <b>Cibles crypto</b> : " + " · ".join("%s %g" % kv for kv in t.items()))
+        lines.append("\nChanger : <code>/regler nom valeur</code> (ex. <code>/regler budget_crypto 40</code>)\n"
+                     "Cibles : <code>/cible SOL 12</code> (0 = retirer)")
         return "\n".join(lines)
 
     def set_setting(self, args):
@@ -455,10 +478,10 @@ class TelegramBot:
             config_mod.update_file(self.engine.cfg_path, key, val)
             self.engine.reload_config()
         except (ValueError, config_mod.ConfigError) as ex:
-            return "❌ Valeur refusée : %s" % ex
+            return "❌ Valeur refusée : %s" % F.esc(ex)
         self.engine.log("info", "Réglage modifié depuis Telegram : %s = %s" % (name, val))
         shown = JOURS[val] if key == "dca.weekday" else ("oui" if val is True else "non" if val is False else val)
-        return "✅ %s = %s (appliqué immédiatement)" % (name, shown)
+        return "✅ <b>%s</b> = %s <i>(appliqué immédiatement)</i>" % (F.esc(name), F.esc(shown))
 
     def set_target(self, args):
         e = self.engine
@@ -521,15 +544,15 @@ class TelegramBot:
             t = e.cfg["dca"]["targets"]
             w = max(1.0, round(min(t.values()) if t else 5.0, 1))
             share = w / (sum(t.values()) + w) * 100
-            return ("Ajouter %s à ton plan crypto ?\nPoids %g → environ %.0f %% de tes achats crypto.\n"
-                    "(Le budget mensuel ne change pas : les autres cryptos auront un peu moins.)" % (sym, w, share),
+            return ("➕ <b>Ajouter %s à ton plan crypto ?</b>\nPoids %g → environ <b>%.0f %%</b> de tes achats crypto.\n"
+                    "<i>Le budget mensuel ne change pas : les autres cryptos auront un peu moins.</i>" % (F.esc(sym), w, share),
                     [[("✅ Ajouter", "addok:c:%s:%g" % (sym, w)), ("❌ Non", "cmd:noop")]])
         t = e.stock_targets()
         w = 20.0
         share = w / (sum(t.values()) + w) * 100
-        return ("Ajouter %s à ton plan actions/ETF ?\nPoids %g → environ %.0f %% de ton budget actions (%.2f €/mois).\n"
-                "Tu l'achèteras dans l'appli Revolut lors du rappel mensuel." % (
-                    e.stock_label(sym), w, share, e.cfg["budget"]["monthly_etf_eur"]),
+        return ("➕ <b>Ajouter à ton plan actions/ETF ?</b>\n%s\nPoids %g → environ <b>%.0f %%</b> de ton budget actions (%s/mois).\n"
+                "<i>Tu l'achèteras dans l'appli Revolut lors du rappel mensuel.</i>" % (
+                    e.stock_label(sym, html=True), w, share, F.eur(e.cfg["budget"]["monthly_etf_eur"])),
                 [[("✅ Ajouter", "addok:s:%s:%g" % (sym, w)), ("❌ Non", "cmd:noop")]])
 
     def stock_plan_text(self):
@@ -537,14 +560,15 @@ class TelegramBot:
         t = e.stock_targets()
         tsum = float(sum(t.values())) or 1
         inv = e.stock_invested()
-        lines = ["📈 Plan actions/ETF — %.2f €/mois (achats manuels guidés)" % e.cfg["budget"]["monthly_etf_eur"], ""]
+        lines = ["📈 <b>Plan actions/ETF</b> — %s/mois <i>(achats guidés dans l'appli Revolut)</i>" % F.eur(
+            e.cfg["budget"]["monthly_etf_eur"]), ""]
         for k, w in sorted(t.items(), key=lambda kv: -kv[1]):
-            lines.append("• %s — cible %.0f %% · investi %.2f €" % (e.stock_label(k), w / tsum * 100, inv.get(k, 0.0)))
+            lines.append("• %s\n   cible <b>%.0f %%</b> · investi %s" % (e.stock_label(k, html=True), w / tsum * 100, F.eur(inv.get(k, 0.0))))
         plan = e.stock_plan()
         if plan:
-            lines += ["", "Prochain rappel (le %d) :" % e.cfg["etf"]["day_of_month"]]
-            lines += ["   %s : %.2f €" % (k, a) for k, a in plan]
-        lines += ["", "Ajouter/retirer : /cible_action NVDA 20 (0 = retirer) · Idées : bouton « 🔭 Radar »"]
+            lines += ["", "🗓 <b>Prochain rappel</b> (le %d) :" % e.cfg["etf"]["day_of_month"]]
+            lines += ["   %s : %s" % (F.esc(k.split(".")[0]), F.eur(a)) for k, a in plan]
+        lines += ["", "<i>Ajouter/retirer : /cible_action NVDA 20 (0 = retirer) · Idées : « 🔭 Radar »</i>"]
         return "\n".join(lines)
 
     def set_stock_target(self, args):
@@ -595,10 +619,10 @@ class TelegramBot:
                 f.write(priv)
             intro = "🔑 Clé créée sur le NAS. Voici la clé publique (elle peut être partagée sans risque) :"
         has_api = bool(self.engine.cfg["revolutx"].get("api_key"))
-        return ("%s\n\n%s\n1. Copie tout le bloc (BEGIN et END compris)\n"
+        return ("%s\n\n<pre>%s</pre>\n1. Copie tout le bloc (BEGIN et END compris)\n"
                 "2. Revolut X (exchange.revolut.com) → Profil → API keys → Créer → colle-la → autorise le trading\n"
                 "3. Envoie ici : /cleapi LA_CLE_API_AFFICHEE\n\nClé API enregistrée : %s" % (
-                    intro, pub.strip(), "oui ✅" if has_api else "pas encore"))
+                    intro, F.esc(pub.strip()), "oui ✅" if has_api else "pas encore"))
 
     def set_api_key(self, args):
         if len(args) != 1 or len(args[0]) < 16:
@@ -613,7 +637,7 @@ class TelegramBot:
             with open(priv_path) as f:
                 bal = RevolutXBroker(key, f.read(), e.market).balances()
         except BrokerError as ex:
-            return "❌ Revolut X refuse cette clé : %s\n(Rien n'a été enregistré.)" % ex
+            return "❌ Revolut X refuse cette clé : %s\n(Rien n'a été enregistré.)" % F.esc(ex)
         config_mod.update_file(e.cfg_path, "revolutx.api_key", key)
         e.reload_config()
         e.log("info", "Clé API Revolut X enregistrée depuis Telegram")
@@ -641,7 +665,7 @@ class TelegramBot:
                 config_mod.update_file(e.cfg_path, "update.token", old_tok)
                 e.reload_config()
                 self.updater.cfg = e.cfg
-                return "❌ Dépôt inaccessible : %s\n(Ancien réglage conservé.)" % ex
+                return "❌ Dépôt inaccessible : %s\n(Ancien réglage conservé.)" % F.esc(ex)
             return "✅ Dépôt enregistré : %s\nDernière version disponible : %s — %s\n\nInstaller : bouton « ⬆️ Mise à jour »." % (
                 args[0], last["sha"][:7], last["message"])
         return "✅ Dépôt enregistré : %s" % args[0]
@@ -651,9 +675,9 @@ class TelegramBot:
         v = self.updater.installed() if self.updater else None
         repo = self.engine.cfg.get("update", {}).get("repo") or "aucun (/depot proprietaire/depot)"
         if v:
-            return "📦 Version installée : %s — %s\nInstallée le %s\nDépôt : %s" % (
-                v["sha"][:7], v.get("message", ""), time.strftime("%d/%m/%Y %H:%M", time.localtime(v["ts"])), repo)
-        return "📦 Version installée : manuelle (zip)\nDépôt : %s" % repo
+            return "📦 <b>Version installée</b> : <code>%s</code>\n%s\nInstallée le %s · dépôt %s" % (
+                v["sha"][:7], F.esc(v.get("message", "")), time.strftime("%d/%m/%Y à %Hh%M", time.localtime(v["ts"])), F.esc(repo))
+        return "📦 <b>Version installée</b> : manuelle (zip) · dépôt %s" % F.esc(repo)
 
     def check_update(self):
         if not self.updater:
@@ -662,14 +686,14 @@ class TelegramBot:
         try:
             last = self.updater.latest()
         except Exception as ex:
-            return "❌ Vérification impossible : %s" % ex
+            return "❌ Vérification impossible : %s" % F.esc(ex)
         cur = self.updater.installed()
         if cur and cur.get("sha") == last["sha"]:
-            return "✅ Tu as déjà la dernière version (%s — %s)." % (last["sha"][:7], last["message"])
+            return "✅ Tu as déjà la dernière version (<code>%s</code> — %s)." % (last["sha"][:7], F.esc(last["message"]))
         self._pending_update = last
-        return ("⬆️ Nouvelle version disponible : %s\n« %s »\n\nAvant d'installer, je lance les tests automatiques. "
-                "S'ils échouent, rien ne change. Si la nouvelle version plante au démarrage, je remets l'ancienne tout seul." % (
-                    last["sha"][:7], last["message"]),
+        return ("⬆️ <b>Nouvelle version disponible</b> : <code>%s</code>\n« %s »\n\n🛡 <i>Avant d'installer, je lance les tests "
+                "automatiques : s'ils échouent, rien ne change. Si la nouvelle version plante au démarrage, je remets "
+                "l'ancienne tout seul.</i>" % (last["sha"][:7], F.esc(last["message"])),
                 [[("⬆️ Installer", "cmd:update"), ("❌ Plus tard", "cmd:noop")]])
 
     def start_update(self):
@@ -681,16 +705,16 @@ class TelegramBot:
 
         def work():
             try:
-                self.notify("⏳ Téléchargement et tests de la version %s (1 à 2 min)…" % up["sha"][:7])
+                self.notify("⏳ Téléchargement et tests de la version <code>%s</code> (1 à 2 min)…" % up["sha"][:7])
                 msg = self.updater.install(up["sha"], up["message"])
                 self.engine.log("info", "Mise à jour : %s" % msg)
-                self.notify("✅ %s\n🔄 Redémarrage…" % msg)
+                self.notify("✅ %s\n🔄 Redémarrage…" % F.esc(msg))
                 self._pending_update = None
                 self.restart()
             except Exception as ex:
                 log.exception("Mise à jour")
                 self.engine.log("error", "Mise à jour annulée : %s" % ex)
-                self.notify("❌ Mise à jour annulée : %s" % ex)
+                self.notify("❌ <b>Mise à jour annulée</b> : rien n'a été changé.\n<i>%s</i>" % F.esc(ex))
             finally:
                 self._busy.release()
 

@@ -3,128 +3,236 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f5f6f8">
 <title>Micro-invest</title>
 <style>
 :root{
-  --bg:#f6f7f9;--card:#fff;--ink:#16181d;--muted:#667085;--line:#e4e7ec;
-  --accent:#3b5bdb;--good:#1f8a4c;--bad:#c92a2a;--warn:#b7791f;--chip:#eef1f6;
+  --bg:#f5f6f8;--card:#ffffff;--ink:#14161b;--ink2:#475467;--muted:#7a8394;--line:#e6e8ec;--line2:#f0f1f4;
+  --accent:#3b5bdb;--accent-soft:#e8edff;--good:#177245;--good-soft:#e5f4ec;--bad:#b42318;--bad-soft:#fdecea;
+  --warn:#9a5b00;--warn-soft:#fff4e0;--chip:#eef0f4;--series2:#98a2b3;
+  --radius:14px;--shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
 }
 @media (prefers-color-scheme: dark){
-  :root{--bg:#0f1115;--card:#171a21;--ink:#e8eaee;--muted:#98a2b3;--line:#272c36;
-    --accent:#7c93ff;--good:#4cc38a;--bad:#ff6b6b;--warn:#f0b54a;--chip:#222733;}
+  :root{--bg:#0e1014;--card:#161a21;--ink:#e9ebef;--ink2:#b3bac6;--muted:#8a93a3;--line:#262b35;--line2:#1d222a;
+    --accent:#8197ff;--accent-soft:#1f2744;--good:#4cc38a;--good-soft:#123222;--bad:#ff7a6e;--bad-soft:#3a1714;
+    --warn:#f0b54a;--warn-soft:#352711;--chip:#222833;--series2:#6b7586;--shadow:none;}
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-.wrap{max-width:1100px;margin:0 auto;padding:16px}
-header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:16px}
-h1{font-size:20px;margin:0}
-h2{font-size:15px;margin:0 0 12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-.chip{display:inline-block;padding:3px 10px;border-radius:99px;background:var(--chip);font-size:13px;font-weight:600}
-.chip.good{color:var(--good)}.chip.bad{color:var(--bad)}.chip.warn{color:var(--warn)}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
-.kpi .v{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
-.kpi .l{color:var(--muted);font-size:13px}
-.pos{color:var(--good)}.neg{color:var(--bad)}
-.bar{height:8px;background:var(--chip);border-radius:99px;overflow:hidden;margin-top:8px}
-.bar>i{display:block;height:100%;background:var(--accent)}
-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
-th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
-th:first-child,td:first-child{text-align:left}
-th{color:var(--muted);font-weight:600;font-size:13px}
-.scroll{overflow-x:auto}
-button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:8px;cursor:pointer}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-button.danger{color:var(--bad)}
-button:disabled{opacity:.5;cursor:default}
-.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-input{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:110px}
-.ask{border-left:4px solid var(--warn)}
-.ask pre{white-space:pre-wrap;font:inherit;margin:0 0 10px}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1120px;margin:0 auto;padding:0 16px 40px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;
+  justify-content:space-between;padding:14px 0 10px;border-bottom:1px solid var(--line);margin-bottom:16px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px}
+.brand i{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;font-style:normal;font-size:16px}
+.hstat{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;background:var(--chip);font-size:13px;font-weight:600;color:var(--ink2);white-space:nowrap}
+.chip.good{background:var(--good-soft);color:var(--good)}.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}.chip.accent{background:var(--accent-soft);color:var(--accent)}
 .muted{color:var(--muted);font-size:13px}
-#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:90vw}
-svg text{fill:var(--muted);font-size:11px}
-.two{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
-.two .card{margin-bottom:0}
-.wbar{display:inline-block;width:70px;height:6px;background:var(--chip);border-radius:9px;position:relative;vertical-align:middle;margin-left:6px}
-.wbar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:9px}
-.wbar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink)}
+.icon-btn{border:1px solid var(--line);background:var(--card);color:var(--ink2);border-radius:99px;padding:3px 10px;font:inherit;font-size:13px;cursor:pointer}
+h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:650;text-transform:uppercase;letter-spacing:.05em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:12px}
+.hero{grid-template-columns:1.4fr 1fr 1fr;margin-bottom:12px}
+@media (max-width:900px){.hero{grid-template-columns:1fr 1fr}.hero .main{grid-column:1/-1}}
+@media (max-width:560px){.hero{grid-template-columns:1fr}}
+.big{font-size:34px;font-weight:750;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+.delta{font-weight:650;font-variant-numeric:tabular-nums}
+.pos{color:var(--good)}.neg{color:var(--bad)}
+.split{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px}
+.split div{min-width:110px}.split b{display:block;font-size:17px;font-variant-numeric:tabular-nums}
+.meter{margin:10px 0 2px}.meter .lbl{display:flex;justify-content:space-between;font-size:13px;color:var(--ink2)}
+.meter .lbl b{color:var(--ink);font-variant-numeric:tabular-nums}
+.track{height:8px;background:var(--chip);border-radius:99px;overflow:hidden;margin-top:5px}
+.track i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.steps{list-style:none;margin:0;padding:0}
+.steps li{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line2)}
+.steps li:last-child{border-bottom:0}.steps .e{width:22px;text-align:center}.steps b{display:block;font-size:14px}
+.alert{border-left:4px solid var(--warn);margin-bottom:12px}
+.alert.bad{border-left-color:var(--bad)}
+.alert pre{white-space:pre-wrap;font:inherit;margin:0 0 12px}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:10px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tabs{display:flex;gap:4px;background:var(--chip);padding:4px;border-radius:12px;margin:18px 0 12px;overflow-x:auto}
+.tabs button{border:0;background:transparent;color:var(--ink2);padding:8px 14px;border-radius:9px;font-weight:600;white-space:nowrap;flex:1}
+.tabs button[aria-selected=true]{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+.panel{display:none}.panel.on{display:block}
+.two{display:grid;gap:12px;grid-template-columns:1.3fr 1fr}
+@media (max-width:860px){.two{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:9px 6px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.scroll{overflow-x:auto}
+.seg{display:inline-flex;background:var(--chip);border-radius:9px;padding:3px;gap:2px}
+.seg button{border:0;background:transparent;padding:5px 11px;border-radius:7px;font-size:13px;color:var(--ink2);font-weight:600}
+.seg button[aria-pressed=true]{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+.chart-wrap{position:relative}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);padding:7px 10px;border-radius:8px;font-size:12px;
+  white-space:nowrap;transform:translate(-50%,-110%);display:none;font-variant-numeric:tabular-nums}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--ink2);margin-top:6px}
+.legend span::before{content:"";display:inline-block;width:18px;height:0;border-top:2.5px solid var(--accent);vertical-align:middle;margin-right:6px}
+.legend span.inv::before{border-top:2px dashed var(--series2)}
+.alloc{display:grid;grid-template-columns:62px 1fr 92px;gap:6px 10px;align-items:center;font-size:14px}
+.alloc .bar{position:relative;height:10px;background:var(--chip);border-radius:99px}
+.alloc .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:99px}
+.alloc .bar b{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink);border-radius:2px}
+.alloc .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink2);font-size:13px}
+.radar-row{display:grid;grid-template-columns:28px minmax(0,1fr) 120px;gap:10px;align-items:center;padding:10px 4px;border-bottom:1px solid var(--line2);cursor:pointer}
+.radar-row:hover{background:var(--line2)}
+.radar-row .n{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.radar-row .t b{font-size:15px}.radar-row .t .muted{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.score{display:flex;align-items:center;gap:8px;justify-content:flex-end;font-variant-numeric:tabular-nums;font-weight:650}
+.score .track{width:56px;margin:0}
+.detail{display:none;padding:4px 4px 14px 42px;border-bottom:1px solid var(--line2);font-size:14px;color:var(--ink2)}
+.detail.on{display:block}.detail ul{margin:6px 0 8px;padding-left:18px}
+.kv{display:flex;flex-wrap:wrap;gap:6px 18px}.kv b{color:var(--ink)}
+input{font:inherit;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);width:110px}
+code{background:var(--chip);padding:1px 6px;border-radius:6px;font-size:13px}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;display:none;max-width:90vw;z-index:10}
+.empty{padding:22px;text-align:center;color:var(--muted)}
+.stack>*+*{margin-top:12px}
+.grid>*,.two>*{min-width:0}
+td.wrap,th.wrap{white-space:normal}
+@media (max-width:560px){.tabs button{padding:8px 8px;font-size:14px}.big{font-size:30px}.card{padding:16px}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Micro-invest</h1>
-    <div class="actions"><span id="mode" class="chip">…</span><span id="etat" class="chip">…</span><span id="upd" class="muted"></span></div>
+    <div class="brand"><i>µ</i>Micro-invest</div>
+    <div class="hstat">
+      <span id="mode" class="chip">…</span><span id="etat" class="chip">…</span>
+      <span id="upd" class="muted"></span><button class="icon-btn" id="refresh" aria-label="Actualiser">↻</button>
+    </div>
   </header>
 
-  <div id="asks"></div>
+  <div id="alerts"></div>
 
-  <div class="grid">
-    <div class="card kpi"><div class="l">Valeur crypto</div><div class="v" id="k-val">—</div><div class="muted" id="k-cost"></div></div>
-    <div class="card kpi"><div class="l">Gain / perte</div><div class="v" id="k-pnl">—</div><div class="muted" id="k-dd"></div></div>
-    <div class="card kpi"><div class="l">Budget crypto du mois</div><div class="v" id="k-bud">—</div><div class="bar"><i id="k-budbar" style="width:0"></i></div></div>
-    <div class="card kpi"><div class="l">Solde EUR sur Revolut X</div><div class="v" id="k-eur">—</div><div class="muted" id="k-next"></div></div>
-  </div>
-
-  <div class="card">
-    <h2>Actions</h2>
-    <div class="actions">
-      <button id="b-pause">⏸ Pause</button>
-      <button id="b-dca" class="primary">Acheter la part de la semaine maintenant</button>
-      <span class="muted">|</span>
-      <span>ETF acheté :</span><input id="i-etf" type="number" step="0.01" min="0" placeholder="15.00"><button id="b-etf">Déclarer</button>
-      <span>Valeur ETF :</span><input id="i-etfv" type="number" step="0.01" min="0" placeholder="230.50"><button id="b-etfv">Mettre à jour</button>
+  <section class="grid hero">
+    <div class="card main">
+      <h2>Patrimoine suivi</h2>
+      <div class="big" id="k-total">—</div>
+      <div id="k-delta" class="delta"></div>
+      <div class="split">
+        <div><span class="muted">Crypto (auto)</span><b id="k-crypto">—</b></div>
+        <div><span class="muted">Actions/ETF</span><b id="k-stocks">—</b></div>
+        <div><span class="muted">Solde Revolut X</span><b id="k-eur">—</b></div>
+      </div>
     </div>
-  </div>
+    <div class="card">
+      <h2 id="budget-title">Budget du mois</h2>
+      <div class="meter"><div class="lbl"><span>Crypto</span><b id="b-crypto">—</b></div><div class="track"><i id="b-crypto-bar" style="width:0"></i></div></div>
+      <div class="meter"><div class="lbl"><span>Actions/ETF</span><b id="b-etf">—</b></div><div class="track"><i id="b-etf-bar" style="width:0"></i></div></div>
+      <p class="muted" id="b-note" style="margin:10px 0 0"></p>
+    </div>
+    <div class="card">
+      <h2>Prochaines étapes</h2>
+      <ul class="steps" id="steps"></ul>
+    </div>
+  </section>
 
-  <div class="card">
-    <h2>Évolution (90 jours)</h2>
-    <div id="chart" class="muted">Pas encore de données : la courbe apparaît après le premier achat.</div>
-  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="pf" aria-selected="true">Portefeuille</button>
+    <button role="tab" data-tab="radar" aria-selected="false">Radar</button>
+    <button role="tab" data-tab="hist" aria-selected="false">Historique</button>
+    <button role="tab" data-tab="rules" aria-selected="false">Réglages</button>
+  </nav>
 
-  <div class="card">
-    <h2>Positions crypto</h2>
-    <div class="scroll"><table>
-      <thead><tr><th>Actif</th><th>Quantité</th><th>Prix moyen</th><th>Prix actuel</th><th>Valeur</th><th>Gain</th><th>Poids / cible</th></tr></thead>
-      <tbody id="t-pos"></tbody>
-    </table></div>
-    <p class="muted" id="etfline"></p>
-  </div>
-
-  <div class="card">
-    <h2>Radar — les mieux notés</h2>
-    <p class="muted" id="radar-meta">Pas encore d'analyse : elle tourne chaque matin (ou bouton « 🔭 Radar » sur Telegram).</p>
+  <!-- PORTEFEUILLE -->
+  <section class="panel on stack" id="p-pf">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:6px">
+        <h2 style="margin:0">Valeur crypto et montant investi</h2>
+        <div class="seg" id="range"><button data-d="30" aria-pressed="false">1 mois</button><button data-d="90" aria-pressed="true">3 mois</button><button data-d="0" aria-pressed="false">Tout</button></div>
+      </div>
+      <div class="chart-wrap" id="chart"><div class="empty">La courbe apparaît après le premier achat.</div></div>
+      <div class="legend"><span>Valeur</span><span class="inv">Montant investi</span></div>
+    </div>
     <div class="two">
-      <div><h2 style="font-size:13px">Cryptos</h2><div class="scroll"><table><tbody id="t-rc"></tbody></table></div></div>
-      <div><h2 style="font-size:13px">Actions &amp; ETF</h2><div class="scroll"><table><tbody id="t-rs"></tbody></table></div></div>
+      <div class="card">
+        <h2>Répartition crypto : réelle et cible</h2>
+        <div class="alloc" id="alloc"></div>
+        <p class="muted" style="margin:12px 0 0">Barre = poids réel · trait = cible. L'achat de la semaine va à la crypto la plus en retard.</p>
+      </div>
+      <div class="card">
+        <h2>Plan actions/ETF</h2>
+        <div class="scroll"><table><thead><tr><th class="wrap">Ligne</th><th>Cible</th><th>Investi</th></tr></thead><tbody id="t-plan"></tbody></table></div>
+        <p class="muted" id="plan-next" style="margin:10px 0"></p>
+        <div class="row"><input id="i-etf" type="number" step="0.01" min="0" placeholder="15.00" aria-label="Montant acheté"><button id="b-etf-decl">Déclarer un achat</button></div>
+        <div class="row" style="margin-top:8px"><input id="i-etfv" type="number" step="0.01" min="0" placeholder="230.50" aria-label="Valeur totale"><button id="b-etfv">Mettre à jour la valeur</button></div>
+      </div>
     </div>
-    <p class="muted">Règles chiffrées (tendance, élan, point d'entrée, risque) : ce n'est pas une prédiction. Ajout au plan depuis Telegram.</p>
-  </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0">Positions crypto</h2>
+        <div class="row"><button id="b-pause">⏸️ Pause</button><button id="b-dca" class="primary">Acheter la part de la semaine</button></div>
+      </div>
+      <div class="scroll"><table>
+        <thead><tr><th>Actif</th><th>Quantité</th><th>Prix moyen</th><th>Prix actuel</th><th>Valeur</th><th>Gain</th></tr></thead>
+        <tbody id="t-pos"></tbody>
+      </table></div>
+    </div>
+  </section>
 
-  <div class="two">
-    <div class="card"><h2>Dernières opérations</h2><div class="scroll"><table><tbody id="t-tr"></tbody></table></div></div>
-    <div class="card"><h2>Journal</h2><div class="scroll"><table><tbody id="t-ev"></tbody></table></div></div>
-  </div>
+  <!-- RADAR -->
+  <section class="panel" id="p-radar">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:6px">
+        <div><h2 style="margin:0 0 2px">Radar</h2><span class="muted" id="radar-meta">Pas encore d'analyse.</span></div>
+        <div class="row">
+          <div class="seg" id="rkind"><button data-k="crypto" aria-pressed="true">Cryptos</button><button data-k="stocks" aria-pressed="false">Actions &amp; ETF</button></div>
+          <div class="seg" id="rfilter"><button data-f="all" aria-pressed="true">Tous</button><button data-f="top" aria-pressed="false">⭐ seulement</button></div>
+        </div>
+      </div>
+      <div id="radar-list"><div class="empty">L'analyse tourne chaque matin. Sur Telegram : ⚙️ Menu → 🔭 Radar.</div></div>
+      <p class="muted" style="margin:12px 0 0">Note sur 100 : tendance (40) · élan 90 j (20) · point d'entrée (25) · risque (15). Règles chiffrées, pas une prédiction.
+        Touche une ligne pour le détail. Pour ajouter un actif : bouton ➕ sous le Radar sur Telegram, ou <code>/cible SOL 5</code>.</p>
+    </div>
+  </section>
 
-  <div class="card" style="margin-top:12px">
-    <h2>Règles actives</h2>
-    <div id="rules" class="muted"></div>
-    <p class="muted">Pour modifier : bouton « ⚙️ Menu » → « 🔧 Réglages » sur Telegram.</p>
-  </div>
+  <!-- HISTORIQUE -->
+  <section class="panel" id="p-hist">
+    <div class="two">
+      <div class="card"><h2>Opérations</h2><div class="scroll"><table>
+        <thead><tr><th>Date</th><th>Actif</th><th>Type</th><th>Montant</th></tr></thead><tbody id="t-tr"></tbody></table></div></div>
+      <div class="card"><h2>Journal</h2><div class="scroll"><table><tbody id="t-ev"></tbody></table></div></div>
+    </div>
+  </section>
+
+  <!-- REGLAGES -->
+  <section class="panel" id="p-rules">
+    <div class="two">
+      <div class="card"><h2>Règles actives</h2><ul class="steps" id="rules"></ul></div>
+      <div class="card"><h2>Réglages</h2><div class="scroll"><table><thead><tr><th>Réglage</th><th>Valeur</th><th>Changer sur Telegram</th></tr></thead>
+        <tbody id="t-set"></tbody></table></div><p class="muted" id="ver" style="margin:12px 0 0"></p></div>
+    </div>
+  </section>
 </div>
-<div id="toast"></div>
+<div id="toast" role="status"></div>
 
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const eur = x => (x ?? 0).toLocaleString("fr-FR",{style:"currency",currency:"EUR"});
-const pct = x => (x>=0?"+":"") + (x ?? 0).toLocaleString("fr-FR",{maximumFractionDigits:1}) + " %";
+const eur = (x, d=2) => (x ?? 0).toLocaleString("fr-FR",{style:"currency",currency:"EUR",minimumFractionDigits:d,maximumFractionDigits:d});
+const px = x => x>=100 ? eur(x) : x>=1 ? eur(x,3) : eur(x,6);
+const pct = x => (x>=0?"+":"−") + Math.abs(x ?? 0).toLocaleString("fr-FR",{minimumFractionDigits:1,maximumFractionDigits:1}) + " %";
+const sEur = x => (x>=0?"+":"−") + eur(Math.abs(x));
 const dt = ts => new Date(ts*1000).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
-let S = null;
+const JOURS = ["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"];
+function when(ts){
+  const d = new Date(ts*1000), n = new Date(); const h = d.getHours() + " h" + (d.getMinutes() ? String(d.getMinutes()).padStart(2,"0") : "");
+  const days = Math.round((new Date(d.getFullYear(),d.getMonth(),d.getDate()) - new Date(n.getFullYear(),n.getMonth(),n.getDate()))/864e5);
+  if(days===0) return "aujourd'hui à " + h; if(days===1) return "demain à " + h;
+  return JOURS[d.getDay()] + " " + d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}) + " à " + h;
+}
+const store = { get(k,d){ try{ return localStorage.getItem(k) ?? d }catch(e){ return d } }, set(k,v){ try{ localStorage.setItem(k,v) }catch(e){} } };
+let S = null, range = +store.get("mi-range", 90), rkind = store.get("mi-rkind","crypto"), rfilter = store.get("mi-rfilter","all");
 
 function toast(m){const t=$("toast");t.textContent=m;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",4000);}
-
 async function post(path, body){
   try{
     const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-Requested-With":"microinvest"},body:JSON.stringify(body||{})});
@@ -133,96 +241,176 @@ async function post(path, body){
   load();
 }
 
-function chart(snaps){
-  if(!snaps || snaps.length < 2) return;
-  const W=1000,H=220,P=36;
+/* ---------- onglets ---------- */
+function showTab(t){
+  document.querySelectorAll(".tabs button").forEach(b=>b.setAttribute("aria-selected", b.dataset.tab===t));
+  document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("on", p.id==="p-"+t));
+  store.set("mi-tab", t);
+}
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+showTab(store.get("mi-tab","pf"));
+function seg(id, attr, val, cb){
+  const el=$(id); el.querySelectorAll("button").forEach(b=>{ b.setAttribute("aria-pressed", b.dataset[attr]===String(val));
+    b.onclick=()=>{ el.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", x===b)); cb(b.dataset[attr]); }; });
+}
+seg("range","d",range,v=>{range=+v;store.set("mi-range",v);chart();});
+seg("rkind","k",rkind,v=>{rkind=v;store.set("mi-rkind",v);radar();});
+seg("rfilter","f",rfilter,v=>{rfilter=v;store.set("mi-rfilter",v);radar();});
+
+/* ---------- graphique ---------- */
+function chart(){
+  const el=$("chart"); let snaps=(S&&S.snapshots)||[];
+  if(range) snaps = snaps.filter(s=>s.ts >= Date.now()/1000 - range*86400);
+  if(snaps.length<2){ el.innerHTML='<div class="empty">La courbe apparaît après le premier achat.</div>'; return; }
+  const W=Math.max(300, el.clientWidth||1000), H=W<600?200:240, L=8,R=8,T=14,B=26;
   const xs=snaps.map(s=>s.ts), ys=snaps.flatMap(s=>[s.value,s.cost]);
-  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys)*0.97,y1=Math.max(...ys)*1.03;
-  const X=t=>P+(t-x0)/(x1-x0||1)*(W-2*P), Y=v=>H-P+(-(v-y0)/(y1-y0||1))*(H-2*P);
+  const x0=Math.min(...xs),x1=Math.max(...xs); let y0=Math.min(...ys),y1=Math.max(...ys); const pad=(y1-y0)*0.12||1; y0-=pad; y1+=pad;
+  const X=t=>L+(t-x0)/(x1-x0||1)*(W-L-R), Y=v=>T+(1-(v-y0)/(y1-y0||1))*(H-T-B);
   const line=k=>snaps.map((s,i)=>(i?"L":"M")+X(s.ts).toFixed(1)+","+Y(s[k]).toFixed(1)).join("");
-  $("chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Valeur du portefeuille et montant investi">
-    <path d="${line("cost")}" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="2" stroke-dasharray="6 5"/>
-    <path d="${line("value")}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
-    <text x="${P}" y="14">${eur(y1)}</text><text x="${P}" y="${H-8}">${eur(y0)}</text>
-    <text x="${W-P}" y="${H-8}" text-anchor="end">${dt(x1)}</text>
-  </svg><div class="muted">— valeur &nbsp; ┄ montant investi</div>`;
+  const grid=[0,.5,1].map(f=>{const v=y0+(y1-y0)*f, y=Y(v).toFixed(1);
+    return `<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" stroke="var(--line)" stroke-width="1"/><text x="${W-R}" y="${y-4}" text-anchor="end" font-size="11" fill="var(--muted)">${eur(v,0)}</text>`}).join("");
+  const d0=new Date(x0*1000).toLocaleDateString("fr-FR",{day:"2-digit",month:"short"}), d1=new Date(x1*1000).toLocaleDateString("fr-FR",{day:"2-digit",month:"short"});
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Valeur du portefeuille crypto et montant investi">
+    ${grid}
+    <path d="${line("cost")}" fill="none" stroke="var(--series2)" stroke-width="2" stroke-dasharray="6 5"/>
+    <path d="${line("value")}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+    <text x="${L}" y="${H-6}" font-size="11" fill="var(--muted)">${d0}</text><text x="${W-R}" y="${H-6}" font-size="11" fill="var(--muted)" text-anchor="end">${d1}</text>
+    <g id="cross" style="display:none"><line id="cx" y1="${T}" y2="${H-B}" stroke="var(--muted)" stroke-width="1"/>
+      <circle id="cv" r="5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"/><circle id="cc" r="4.5" fill="var(--series2)" stroke="var(--card)" stroke-width="2"/></g>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="transparent" id="hit"/>
+  </svg><div class="tip" id="tip"></div>`;
+  const svg=el.querySelector("svg"), tip=$("tip");
+  const move=ev=>{ const r=svg.getBoundingClientRect(), cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left, sx=cx/r.width*W;
+    let best=snaps[0]; for(const s of snaps) if(Math.abs(X(s.ts)-sx)<Math.abs(X(best.ts)-sx)) best=s;
+    const bx=X(best.ts); $("cross").style.display=""; $("cx").setAttribute("x1",bx); $("cx").setAttribute("x2",bx);
+    $("cv").setAttribute("cx",bx); $("cv").setAttribute("cy",Y(best.value)); $("cc").setAttribute("cx",bx); $("cc").setAttribute("cy",Y(best.cost));
+    const g=best.value-best.cost;
+    tip.innerHTML=`${dt(best.ts)}<br>Valeur <b>${eur(best.value)}</b><br>Investi ${eur(best.cost)}<br>${g>=0?"Gain":"Perte"} ${sEur(g)}`;
+    tip.style.display="block"; tip.style.left=Math.min(Math.max(bx/W*r.width,70),r.width-70)+"px"; tip.style.top=(Y(best.value)/H*r.height)+"px"; };
+  const out=()=>{ $("cross").style.display="none"; tip.style.display="none"; };
+  svg.addEventListener("mousemove",move); svg.addEventListener("touchmove",move,{passive:true}); svg.addEventListener("mouseleave",out); svg.addEventListener("touchend",out);
 }
 
+/* ---------- radar ---------- */
+function inPlan(r){ return r.kind==="crypto" ? (r.symbol in S.config.targets) : (r.symbol in (S.etf.targets||{})); }
+function radar(){
+  const rd=S&&S.radar; if(!rd){ return; }
+  $("radar-meta").textContent = "Analyse " + when(rd.ts).replace("à","à") + " · " + rd.n_crypto + " cryptos et " + rd.n_stocks + " actions/ETF";
+  let rows = rkind==="crypto" ? rd.crypto : rd.stocks;
+  if(rfilter==="top") rows = rows.filter(r=>r.label.startsWith("⭐"));
+  if(!rows.length){ $("radar-list").innerHTML='<div class="empty">Aucun résultat'+(rd[rkind].length?" avec ce filtre":" (données indisponibles)")+'.</div>'; return; }
+  $("radar-list").innerHTML = rows.map((r,i)=>`
+    <div class="radar-row" data-i="${i}" role="button" tabindex="0" aria-expanded="false">
+      <span class="n">${i+1}</span>
+      <span class="t"><b>${esc(r.kind==="crypto"?r.symbol:r.name)}</b> <span class="chip ${r.label.startsWith("⭐")?"good":r.label.startsWith("⛔")?"bad":r.label.startsWith("👀")?"accent":""}">${esc(r.label)}</span>${inPlan(r)?' <span class="chip">✅ dans ton plan</span>':""}
+        <span class="muted">${esc(r.reason)}</span></span>
+      <span class="score">${r.score}<div class="track"><i style="width:${r.score}%"></i></div></span>
+    </div>
+    <div class="detail" id="d-${i}">
+      <ul>${r.reasons.map(x=>"<li>"+esc(x)+"</li>").join("")}</ul>
+      <div class="kv"><span>30 j <b>${pct(r.r30*100)}</b></span><span>90 j <b>${pct(r.r90*100)}</b></span>
+        <span>Depuis le plus haut 1 an <b>${pct(r.from_high*100)}</b></span><span>Volatilité <b>${Math.round(r.vol*100)} %/an</b></span>
+        ${r.kind!=="crypto"?`<span>${esc(r.category)} · appli Revolut : <b>${esc(r.search)}</b></span>`:""}</div>
+      <p class="muted" style="margin:8px 0 0">${inPlan(r)?"Déjà dans ton plan.":"Ajouter : "+(r.kind==="crypto"?`<code>/cible ${esc(r.symbol)} 5</code>`:`<code>/cible_action ${esc(r.symbol.split(".")[0])} 20</code>`)+" sur Telegram."}</p>
+    </div>`).join("");
+  document.querySelectorAll(".radar-row").forEach(el=>{ const t=()=>{ const d=$("d-"+el.dataset.i), on=!d.classList.contains("on"); d.classList.toggle("on",on); el.setAttribute("aria-expanded",on); };
+    el.onclick=t; el.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); t(); } }; });
+}
+
+/* ---------- rendu ---------- */
 function render(s){
-  S=s;
-  $("mode").textContent = s.mode==="live" ? "RÉEL" : "SIMULATION";
-  $("mode").className = "chip " + (s.mode==="live" ? "warn" : "");
-  const etat = s.frozen ? ["Gelé (plafond de perte)","bad"] : s.paused ? ["En pause","warn"] : ["Actif","good"];
-  $("etat").textContent = etat[0]; $("etat").className = "chip "+etat[1];
-  $("upd").textContent = "maj " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+  S=s; const pf=s.portfolio, b=s.budget, c=s.config;
+  $("mode").textContent = s.mode==="live" ? "💶 Réel" : "🧪 Simulation"; $("mode").className="chip "+(s.mode==="live"?"warn":"accent");
+  const st = s.frozen ? ["🧊 Achats gelés","bad"] : s.paused ? ["⏸️ En pause","warn"] : ["▶️ Actif","good"];
+  $("etat").textContent=st[0]; $("etat").className="chip "+st[1];
+  $("upd").textContent = "à jour " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
 
-  const pf=s.portfolio, b=s.budget;
-  $("k-val").textContent = eur(pf.value);
-  $("k-cost").textContent = "investi : " + eur(pf.cost) + (pf.realized ? " · gains encaissés : "+eur(pf.realized) : "");
-  $("k-pnl").textContent = pf.cost ? pct(pf.pnl_pct) : "—";
-  $("k-pnl").className = "v " + (pf.pnl>=0 ? "pos" : "neg");
-  $("k-dd").textContent = "gel des achats à -" + s.config.max_drawdown_pct + " %";
-  $("k-bud").textContent = eur(b.spent) + " / " + eur(b.monthly);
-  $("k-budbar").style.width = Math.min(100, b.monthly ? b.spent/b.monthly*100 : 0) + "%";
+  // alertes
+  let a = s.approvals.map(x=>`<div class="card alert"><h2>Question en attente</h2><pre>${esc(x.text)}</pre>
+    <div class="row"><button class="primary" onclick="post('/api/approve/${x.id}')">${x.kind==="etf"?"✅ Fait":"✅ Oui"}</button>
+    <button onclick="post('/api/reject/${x.id}')">${x.kind==="etf"?"⏭ Sauter":"❌ Non"}</button><span class="muted">expire ${when(x.expires)}</span></div></div>`).join("");
+  if(s.frozen) a = `<div class="card alert bad"><h2>Achats gelés</h2><pre>Le portefeuille crypto a perdu plus de ${c.max_drawdown_pct} %. Aucun achat n'est fait, rien n'est vendu.</pre>
+    <button onclick="post('/api/resume_freeze')">Réactiver les achats quand même</button></div>` + a;
+  $("alerts").innerHTML = a;
+
+  // héros
+  const stocksVal = s.etf.value ? s.etf.value.value : s.etf.invested;
+  const total = pf.value + stocksVal, invested = pf.cost + s.etf.invested, gain = total - invested;
+  $("k-total").textContent = eur(total);
+  $("k-delta").innerHTML = invested>0 ? `<span class="${gain>=0?"pos":"neg"}">${sEur(gain)} (${pct(invested?gain/invested*100:0)})</span> <span class="muted">sur ${eur(invested)} investis</span>` : '<span class="muted">Pas encore d\'investissement</span>';
+  $("k-crypto").innerHTML = eur(pf.value) + (pf.cost ? ` <span class="muted ${pf.pnl>=0?"pos":"neg"}">${pct(pf.pnl_pct)}</span>`:"");
+  $("k-stocks").innerHTML = eur(stocksVal) + (s.etf.value ? "" : (s.etf.invested ? ' <span class="muted">investi</span>' : ""));
   $("k-eur").textContent = s.balances.erreur ? "illisible" : eur(s.balances.EUR || 0);
-  $("k-next").textContent = "prochain achat : " + dt(s.next_dca);
 
-  $("b-pause").textContent = s.paused ? "▶️ Reprendre" : "⏸ Pause";
+  const month = new Date().toLocaleDateString("fr-FR",{month:"long"});
+  $("budget-title").textContent = "Budget de " + month;
+  $("b-crypto").textContent = eur(b.spent) + " / " + eur(b.monthly,0); $("b-crypto-bar").style.width = Math.min(100,b.monthly?b.spent/b.monthly*100:0)+"%";
+  $("b-etf").textContent = eur(b.etf_spent) + " / " + eur(b.etf_monthly,0); $("b-etf-bar").style.width = Math.min(100,b.etf_monthly?b.etf_spent/b.etf_monthly*100:0)+"%";
+  $("b-note").textContent = "Reste " + eur(b.remaining) + " pour la crypto ce mois-ci.";
+
+  const steps = [["🛒","Prochain achat crypto", when(s.next_dca) + " · ≈ " + eur(c.weekly_base)],
+    ["📈","Rappel actions/ETF", when(s.next_etf) + " · " + eur(b.etf_monthly)],
+    ["🔭","Radar", s.radar ? "dernière analyse " + when(s.radar.ts) : "chaque jour à " + c.radar_hour + " h"]];
+  if(s.approvals.length) steps.unshift(["❓", s.approvals.length + (s.approvals.length>1?" questions en attente":" question en attente"), "réponds ci-dessus ou sur Telegram"]);
+  $("steps").innerHTML = steps.map(x=>`<li><span class="e">${x[0]}</span><span><b>${esc(x[1])}</b><span class="muted">${esc(x[2])}</span></span></li>`).join("");
+
+  // allocation
+  const rows = pf.rows.filter(r=>r.qty>0 || r.target_pct>0);
+  $("alloc").innerHTML = rows.map(r=>`<b>${esc(r.asset)}</b>
+    <div class="bar" role="img" aria-label="${esc(r.asset)} : ${r.weight_pct.toFixed(0)} % pour une cible de ${r.target_pct.toFixed(0)} %"><i style="width:${Math.min(100,r.weight_pct)}%"></i><b style="left:${Math.min(99.5,r.target_pct)}%"></b></div>
+    <span class="v">${r.weight_pct.toFixed(0)} % / ${r.target_pct.toFixed(0)} %</span>`).join("");
+
+  // positions
+  const held = pf.rows.filter(r=>r.qty>0);
+  $("t-pos").innerHTML = held.length ? held.map(r=>`<tr><td><b>${esc(r.asset)}</b></td><td>${r.qty.toLocaleString("fr-FR",{maximumFractionDigits:8})}</td>
+    <td>${px(r.avg)}</td><td>${r.price?px(r.price):"—"}</td><td><b>${eur(r.value)}</b></td>
+    <td class="${r.pnl_pct>=0?"pos":"neg"}">${pct(r.pnl_pct)}</td></tr>`).join("") + `<tr><td><b>Total</b></td><td></td><td></td><td></td><td><b>${eur(pf.value)}</b></td><td class="${pf.pnl>=0?"pos":"neg"}"><b>${pct(pf.pnl_pct)}</b></td></tr>`
+    : `<tr><td colspan="6" class="empty">Aucune position pour l'instant : le premier achat arrive ${when(s.next_dca)}.</td></tr>`;
+  $("b-pause").textContent = s.paused ? "▶️ Reprendre" : "⏸️ Pause";
   $("b-pause").onclick = () => post(s.paused ? "/api/resume" : "/api/pause");
 
-  let asks = s.approvals.map(a => `<div class="card ask"><h2>Question en attente</h2><pre>${esc(a.text)}</pre>
-    <div class="actions"><button class="primary" onclick="post('/api/approve/${a.id}')">${a.kind==="etf"?"✅ Fait":"✅ Oui"}</button>
-    <button onclick="post('/api/reject/${a.id}')">${a.kind==="etf"?"⏭ Sauter":"❌ Non"}</button>
-    <span class="muted">expire ${dt(a.expires)}</span></div></div>`).join("");
-  if(s.frozen) asks = `<div class="card ask"><h2>Achats gelés</h2><pre>Le plafond de perte de -${s.config.max_drawdown_pct} % est atteint. Aucun achat n'est fait, rien n'est vendu.</pre>
-    <button onclick="post('/api/resume_freeze')">Réactiver les achats quand même</button></div>` + asks;
-  $("asks").innerHTML = asks;
+  // plan actions
+  const tg = s.etf.targets||{}, tsum = Object.values(tg).reduce((x,y)=>x+y,0)||1;
+  $("t-plan").innerHTML = Object.entries(tg).sort((x,y)=>y[1]-x[1]).map(([k,w])=>`<tr><td class="wrap"><b>${esc(((s.stock_labels||{})[k]||k).replace(/ \(cherche.*$/,""))}</b><span class="muted" style="display:block">${esc(k)}</span></td><td>${Math.round(w/tsum*100)} %</td><td>${eur((s.etf.by_line||{})[k]||0)}</td></tr>`).join("");
+  $("plan-next").textContent = (s.stock_plan||[]).length ? "Rappel " + when(s.next_etf) + " : " + s.stock_plan.map(([k,v])=>k.split(".")[0]+" "+eur(v)).join(" · ") : "";
 
-  $("t-pos").innerHTML = pf.rows.map(r => `<tr><td><b>${esc(r.asset)}</b></td>
-    <td>${r.qty ? r.qty.toLocaleString("fr-FR",{maximumFractionDigits:8}) : "—"}</td>
-    <td>${r.avg ? eur(r.avg) : "—"}</td><td>${r.price ? eur(r.price) : "—"}</td><td>${eur(r.value)}</td>
-    <td class="${r.pnl_pct>=0?"pos":"neg"}">${r.cost ? pct(r.pnl_pct) : "—"}</td>
-    <td>${r.weight_pct.toFixed(0)} / ${r.target_pct.toFixed(0)} %<span class="wbar"><i style="width:${Math.min(100,r.weight_pct)}%"></i><b style="left:${Math.min(100,r.target_pct)}%"></b></span></td></tr>`).join("");
+  // historique
+  $("t-tr").innerHTML = s.trades.length ? s.trades.map(t=>`<tr><td>${dt(t.ts)}</td><td><b>${esc(t.kind==="etf"?t.asset.split(".")[0]:t.asset)}</b></td>
+    <td>${t.kind==="etf"?"Action (manuel)":t.side==="buy"?"Achat":"Vente"}</td><td class="${t.side==="sell"?"pos":""}">${eur(t.eur)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="empty">Aucune opération pour l'instant.</td></tr>`;
+  $("t-ev").innerHTML = s.events.map(ev=>`<tr><td>${dt(ev.ts)}</td><td style="text-align:left;white-space:normal">${ev.level==="error"?"🔴 ":ev.level==="warn"?"🟠 ":""}${esc(ev.text)}</td></tr>`).join("");
 
-  const e=s.etf;
-  $("etfline").textContent = "Actions/ETF (" + e.name + ", achats guidés dans l'appli Revolut) : " + eur(e.invested) + " investis" +
-    (e.value ? " · valeur déclarée " + eur(e.value.value) + " le " + dt(e.value.ts) : " · valeur pas encore déclarée") +
-    " · budget actions du mois : " + eur(b.etf_spent) + " / " + eur(b.etf_monthly);
-
-  $("t-tr").innerHTML = s.trades.length ? s.trades.map(t => `<tr><td>${dt(t.ts)}</td><td>${t.kind==="etf"?"ETF":esc(t.asset)}</td>
-    <td class="${t.side==="buy"?"":"pos"}">${t.side==="buy"?"Achat":"Vente"}</td><td>${eur(t.eur)}</td></tr>`).join("")
-    : `<tr><td class="muted">Aucune opération pour l'instant.</td></tr>`;
-  $("t-ev").innerHTML = s.events.map(ev => `<tr><td>${dt(ev.ts)}</td><td style="text-align:left;white-space:normal" class="${ev.level==="error"?"neg":""}">${esc(ev.text)}</td></tr>`).join("");
-
-  const c=s.config, tp=c.take_profit;
+  // réglages
+  const tp=c.take_profit;
   $("rules").innerHTML = [
-    `Achat automatique chaque <b>${esc(c.dca_day)}</b> à <b>${c.dca_hour}h</b> (≈ ${eur(b.weekly_base)}), plafonné à ${eur(c.budget.monthly_crypto_eur)}/mois crypto.`,
-    `Validation demandée au-delà de ${eur(c.budget.approval_above_eur)} par ordre · maximum absolu ${eur(c.budget.max_order_eur)} par ordre.`,
-    `Cibles : ` + Object.entries(c.targets).map(([k,v])=>esc(k)+" "+v).join(" · "),
-    `Gel de tous les achats si le portefeuille perd ${c.max_drawdown_pct} %.`,
-    tp.enabled ? `Prise de bénéfices proposée à +${tp.gain_pct} % (vente de ${tp.sell_fraction_pct} %), jamais sous ton prix moyen.` : `Prise de bénéfices désactivée.`,
-    `Jamais de levier, jamais d'achat au-delà du solde disponible.`
-  ].map(x=>"• "+x).join("<br>");
+    ["🛒",`Achat automatique chaque ${c.dca_day} à ${c.dca_hour} h`,`≈ ${eur(c.weekly_base)}, plafonné à ${eur(c.budget.monthly_crypto_eur,0)}/mois`],
+    ["📉","Achat renforcé sur baisse",`si une crypto est ${c.dip_threshold_pct} % sous sa moyenne 30 j (avec ton accord)`],
+    ["✋","Ton accord est demandé",`au-delà de ${eur(c.budget.approval_above_eur,0)} par ordre · jamais plus de ${eur(c.budget.max_order_eur,0)}`],
+    ["🧊","Gel des achats",`si le portefeuille crypto perd ${c.max_drawdown_pct} %`],
+    ["💰","Prise de bénéfices", tp.enabled?`proposée à +${tp.gain_pct} % (vente de ${tp.sell_fraction_pct} %), jamais sous ton prix moyen`:"désactivée"],
+    ["🛡","Jamais en négatif","aucun levier, jamais d'achat au-delà du solde disponible"],
+  ].map(x=>`<li><span class="e">${x[0]}</span><span><b>${esc(x[1])}</b><span class="muted">${esc(x[2])}</span></span></li>`).join("");
+  const set = [["Budget crypto / mois", eur(c.budget.monthly_crypto_eur,0), "/regler budget_crypto 40"],
+    ["Budget actions / mois", eur(c.budget.monthly_etf_eur,0), "/regler budget_etf 15"],
+    ["Jour et heure d'achat", c.dca_day + " " + c.dca_hour + " h", "/regler jour_achat lundi"],
+    ["Plafond de perte", c.max_drawdown_pct + " %", "/regler plafond_perte 25"],
+    ["Cibles crypto", Object.entries(c.targets).map(([k,v])=>k+" "+v).join(" · "), "/cible SOL 12"],
+    ["Rappel actions", "le " + c.etf_day + " du mois", "/regler jour_etf 5"]];
+  $("t-set").innerHTML = set.map(x=>`<tr><td class="wrap">${esc(x[0])}</td><td style="white-space:normal"><b>${esc(x[1])}</b></td><td><code>${esc(x[2])}</code></td></tr>`).join("");
+  $("ver").textContent = "Version : " + (s.version ? s.version.sha.slice(0,7) + " — " + s.version.message : "manuelle (zip)");
 
-  chart(s.snapshots);
-
-  const rd = s.radar, inPlan = (r) => r.kind==="crypto" ? (r.symbol in s.config.targets) : (r.symbol in (s.etf.targets||{}));
-  if(rd){
-    $("radar-meta").textContent = "Analyse du " + dt(rd.ts) + " · " + rd.n_crypto + " cryptos et " + rd.n_stocks + " actions/ETF notées sur 100.";
-    const row = r => `<tr><td><b>${esc(r.kind==="crypto"?r.symbol:r.name)}</b>${inPlan(r)?" ✅":""}</td><td>${r.score}/100</td>
-      <td style="text-align:left">${esc(r.label)}</td><td style="text-align:left;white-space:normal" class="muted">${esc(r.reason)}</td></tr>`;
-    $("t-rc").innerHTML = rd.crypto.slice(0,8).map(row).join("") || `<tr><td class="muted">indisponible</td></tr>`;
-    $("t-rs").innerHTML = rd.stocks.slice(0,8).map(row).join("") || `<tr><td class="muted">indisponible</td></tr>`;
-  }
+  chart(); radar();
 }
 
 async function load(){
   try{ const r = await fetch("/api/state"); const s = await r.json(); if(s.error) throw s.error; render(s); }
   catch(e){ $("upd").textContent = "erreur de chargement : " + e; }
 }
+$("refresh").onclick = load;
 $("b-dca").onclick = () => { if(confirm("Lancer l'achat de la semaine maintenant ?")) post("/api/dca_now"); };
-$("b-etf").onclick = () => { const v=parseFloat($("i-etf").value); if(v>0) post("/api/etf",{amount:v}); };
+$("b-etf-decl").onclick = () => { const v=parseFloat($("i-etf").value); if(v>0) post("/api/etf",{amount:v}); };
 $("b-etfv").onclick = () => { const v=parseFloat($("i-etfv").value); if(v>=0) post("/api/etf_value",{value:v}); };
+let resizeT; window.addEventListener("resize", ()=>{ clearTimeout(resizeT); resizeT=setTimeout(()=>{ if(S) chart(); }, 150); });
 load(); setInterval(load, 30000);
 </script>
 </body>

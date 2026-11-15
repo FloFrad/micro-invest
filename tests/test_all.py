@@ -156,7 +156,7 @@ class TestStrategy(Base):
         self.assertEqual(t[0]["asset"], "BTC")
         self.assertAlmostEqual(t[0]["eur"], round(35 * 12 / 52, 2), places=2)
         self.assertAlmostEqual(self.eur_balance(), 100 - t[0]["eur"], places=6)
-        self.assertIn("Acheté", self.notifier.last())
+        self.assertIn("Achat effectué", self.notifier.last())
 
     def test_rotation_follows_targets(self):
         for _ in range(4):
@@ -245,7 +245,7 @@ class TestSafety(Base):
         self.e._prices_ts = 0
         self.e.check_drawdown()
         self.assertTrue(self.e.flag("frozen"))
-        self.assertIn("GELÉS", self.notifier.last())
+        self.assertIn("Achats gelés", self.notifier.last())
         n = len(self.e.store.trades())
         self.e.run_dca(manual=True)
         self.assertEqual(len(self.e.store.trades()), n)
@@ -354,7 +354,7 @@ class TestSchedule(Base):
 
     def test_status_and_state_render(self):
         self.e.run_dca()
-        self.assertIn("SIMULATION", self.e.status_text())
+        self.assertIn("Simulation", self.e.status_text())
         self.assertIn("BTC", self.e.portfolio_text())
         st = self.e.state()
         json.dumps(st, default=str)
@@ -632,7 +632,7 @@ class TestRadar(Base):
         self.assertNotIn("add:c:BTC", btn)                    # déjà dans le plan
         self.assertNotIn("add:s:IWDA.AS", btn)
         info, r = self.e.get_radar().info_text(data, "doge")
-        self.assertIn("Note", info)
+        self.assertIn("/100", info)
         info, r = self.e.get_radar().info_text(data, "NVDA")
         self.assertIn("Nvidia", info)
         st = self.e.state()["radar"]
@@ -667,7 +667,7 @@ class TestRadar(Base):
                 break
             time.sleep(0.02)
         time.sleep(0.1)
-        self.assertTrue(any("🔭 Radar du" in t for t in texts()))
+        self.assertTrue(any("Radar du" in t for t in texts()))
         click("add:c:DOGE")
         self.assertIn("Ajouter DOGE", texts()[-1])
         click("addok:c:DOGE:7.5")
@@ -886,7 +886,7 @@ class TestTelegramControls(Base):
         self.msg("/start")
         self.assertIn("keyboard", self.sent[-1][1]["reply_markup"])
         self.msg("📊 Statut")
-        self.assertIn("Mode", self.texts()[-1])
+        self.assertIn("Statut", self.texts()[-1])
         self.msg("⚙️ Menu")
         menu = self.sent[-1][1]["reply_markup"]["inline_keyboard"]
         datas = [b["callback_data"] for row in menu for b in row]
@@ -916,7 +916,7 @@ class TestTelegramControls(Base):
         self.msg("/cible LINK 0")
         self.assertNotIn("LINK", self.e.cfg["dca"]["targets"])
         self.msg("/reglages")
-        self.assertIn("budget_crypto = 40", self.texts()[-1])
+        self.assertIn("<b>40</b> · <code>budget_crypto</code>", self.texts()[-1])
 
     def test_update_flow(self):
         self.msg("/maj")
@@ -976,6 +976,88 @@ class TestMainScript(unittest.TestCase):
         for f in ("run.sh", "stop.sh"):
             r = subprocess.run(["sh", "-n", os.path.join(PROJECT, f)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             self.assertEqual(r.returncode, 0, r.stdout.decode())
+
+
+class TestFormatting(unittest.TestCase):
+    def test_numbers_fr(self):
+        from microinvest import fmt as F
+        self.assertEqual(F.eur(59641.784), "59\u202f641,78\u202f€")
+        self.assertEqual(F.eur(8.08), "8,08\u202f€")
+        self.assertEqual(F.pct(3.62), "+3,6\u202f%")
+        self.assertEqual(F.pct(-12.0), "−12,0\u202f%")
+        self.assertEqual(F.signed_eur(-1.5), "−1,50\u202f€")
+        self.assertEqual(F.bar(0.5, 4), "▰▰▱▱")
+        self.assertEqual(F.strip_tags("<b>a &amp; b</b>"), "a & b")
+        self.assertEqual(F.esc("<x> & y"), "&lt;x&gt; &amp; y")
+        t = F.table([["A", "1"], ["BBB", "22"]])
+        self.assertEqual(t, "A     1\nBBB  22")
+
+    def test_html_fallback_to_plain_text(self):
+        from microinvest.telegram_bot import TelegramError
+        calls = []
+
+        def api(token, method, params=None, timeout=20):
+            calls.append(dict(params))
+            if params.get("parse_mode") == "HTML":
+                raise TelegramError("Bad Request: can't parse entities: unsupported start tag")
+            return {"message_id": 5}
+
+        bot = TelegramBot("T", "42", None, api=api)
+        self.assertEqual(bot.notify("<b>Bonjour</b> &amp; <x>"), 5)
+        self.assertEqual(calls[0]["parse_mode"], "HTML")
+        self.assertNotIn("parse_mode", calls[1])
+        self.assertEqual(calls[1]["text"], "Bonjour & <x>")
+
+    def test_all_engine_messages_are_valid_html(self):
+        """Chaque message envoyé doit être du HTML Telegram valide (balises fermées, & et < échappés)."""
+        import html.parser
+
+        class Checker(html.parser.HTMLParser):
+            OK = {"b", "i", "code", "pre"}
+
+            def __init__(s):
+                super().__init__(convert_charrefs=False)
+                s.stack = []
+
+            def handle_starttag(s, tag, attrs):
+                assert tag in s.OK, tag
+                s.stack.append(tag)
+
+            def handle_endtag(s, tag):
+                assert s.stack and s.stack.pop() == tag, tag
+
+        def check(text):
+            assert "& " not in text.replace("&amp;", ""), text
+            c = Checker()
+            c.feed(text)
+            c.close()
+            assert not c.stack, text
+
+        b = Base("run")
+        b.setUp()
+        try:
+            e = b.e
+            e.run_dca()
+            b.market.prices["SOL"] = 120.0
+            e._prices_ts = 0
+            e.run_dca(manual=True)
+            e.check_opportunity()
+            e.cfg["take_profit"]["min_position_eur"] = 1
+            b.market.prices["BTC"] *= 1.6
+            e._prices_ts = 0
+            e.check_take_profit()
+            e.etf_prompt()
+            e.record_etf(15)
+            e.store.set("paper_balances", {"EUR": 0})
+            e.buy("ETH", 5, "test <&>", automatic=False)
+            for t in (e.status_text(), e.portfolio_text(), e.history_text(), e.weekly_report_text(), e.set_etf_value(10)):
+                check(t)
+            for text, _ in b.notifier.msgs:
+                check(text)
+            for a in e.store.pending_approvals():
+                check(a["text"])
+        finally:
+            b.tearDown()
 
 
 class TestConfig(unittest.TestCase):
