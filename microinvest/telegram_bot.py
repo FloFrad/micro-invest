@@ -57,6 +57,7 @@ AIDE = """🤖 <b>Micro-invest — aide</b>
 Les boutons en bas de l'écran font l'essentiel. « ⚙️ Menu » donne accès à tout le reste.
 
 <b>Commandes avec une valeur</b>
+<code>/acheter BTC:5 ETH:3</code> — acheter la part de la semaine avec ta répartition
 <code>/etf 15 IWDA</code> — déclarer 15 € d'achat sur une ligne actions/ETF
 <code>/etfvaleur 230.50</code> — valeur actuelle de tes actions/ETF
 <code>/regler budget_crypto 40</code> — changer un réglage (liste : /reglages)
@@ -401,12 +402,18 @@ class TelegramBot:
                         F.eur(bs["monthly"]), F.bar(bs["etf_spent"] / bs["etf_monthly"] if bs["etf_monthly"] else 0),
                         F.eur(bs["etf_spent"]), F.eur(bs["etf_monthly"]), F.eur(bs["weekly_base"])))
         if cmd in ("/acheter", "/buy"):
+            if args:
+                try:
+                    alloc = e.parse_split(args)
+                except Exception as ex:
+                    return ("❌ %s\nExemple : <code>/acheter BTC:5 ETH:3</code> ou <code>/acheter BTC:60%% ETH:40%%</code>" % F.esc(ex))
+                return self.confirm_split(alloc, "ta répartition")
             plan = e.plan_dca()
             if plan["amount"] <= 0:
                 return "Budget du mois épuisé : aucun achat possible avant le 1er."
-            return ("🛒 <b>Acheter maintenant ?</b>\nPrévu : <b>%s de %s</b>\n💡 %s" % (
+            return ("🛒 <b>Acheter la part de la semaine ?</b>\nProposé : <b>%s de %s</b>\n💡 %s" % (
                 F.eur(plan["amount"]), F.esc(plan["asset"]), F.esc(plan["reason"])),
-                [[("✅ Oui, acheter", "cmd:dca_now"), ("❌ Non", "cmd:noop")]])
+                [[("✅ Oui, acheter", "cmd:dca_now"), ("✏️ Répartir autrement", "cmd:split")], [("❌ Non", "cmd:noop")]])
         if cmd == "/pause":
             e.store.set("paused", True)
             e.log("info", "Pause demandée depuis Telegram")
@@ -525,6 +532,27 @@ class TelegramBot:
             return self.on_command(data[2:])
         if data == "cmd:dca_now":
             return e.run_dca(manual=True)
+        if data == "cmd:split":
+            presets, total = e.split_presets()
+            if not presets:
+                return "Budget du mois épuisé : aucun achat possible avant le 1er."
+            self._presets = presets
+            names = {"cibles": "📊 Selon mes cibles", "moitie": "½ + ½ (%s)" % " · ".join(list(presets.get("moitie", {})))}
+            btn = [(names.get(k, "Tout en %s" % k.replace("tout_", "")), "splitp:%s" % k) for k in presets]
+            return ("✏️ <b>Comment répartir %s ?</b>\nChoisis une répartition, ou écris la tienne :\n"
+                    "<code>/acheter BTC:5 ETH:3</code> · <code>/acheter BTC:60%% SOL:40%%</code> (en %% de la part de la semaine)" % F.eur(total),
+                    [btn[i:i + 2] for i in range(0, len(btn), 2)])
+        if data.startswith("splitp:"):
+            presets = getattr(self, "_presets", None) or e.split_presets()[0]
+            alloc = presets.get(data.split(":", 1)[1])
+            if not alloc:
+                return "Répartition expirée : recommence avec « 🛒 Acheter »."
+            return self.confirm_split(alloc, "répartition choisie")
+        if data.startswith("splitok:"):
+            alloc = self._splits.pop(data.split(":", 1)[1], None)
+            if not alloc:
+                return "Demande expirée ou déjà traitée : recommence avec « 🛒 Acheter »."
+            return e.buy_split(alloc, "achat de la semaine, répartition choisie")
         if data == "cmd:resume_freeze":
             return e.resume_freeze()
         if data == "cmd:etf_default":
@@ -711,6 +739,18 @@ class TelegramBot:
         buttons = radar.summary_buttons(rd) or []
         buttons.append([("🔄 Nouvelle analyse", "cmd:radar_run")])
         return (text, buttons)
+
+    def confirm_split(self, alloc, label):
+        e = self.engine
+        refus = e.check_split(alloc)
+        if refus:
+            return "⛔ Impossible : %s." % F.esc(refus)
+        if not hasattr(self, "_splits"):
+            self._splits = {}
+        sid = str(len(self._splits) + int(time.time()) % 100000)
+        self._splits[sid] = alloc
+        return ("🛒 <b>Acheter avec %s ?</b>\n%s" % (F.esc(label), e.split_summary(alloc)),
+                [[("✅ Oui, acheter", "splitok:%s" % sid), ("❌ Non", "cmd:noop")]])
 
     def confirm_add(self, k, sym):
         e = self.engine

@@ -1429,6 +1429,62 @@ class TestStockDeclaration(Base):
         self.assertIn("ASML.AS", tickers)
 
 
+class TestCustomSplit(Base):
+    def setUp(self):
+        super().setUp()
+        from microinvest.telegram_bot import WebCommands
+        self.web = WebCommands(self.e, base_dir=self.dir)
+
+    def test_parse_formats(self):
+        base = self.e.budget_status()["weekly_base"]
+        self.assertEqual(self.e.parse_split(["BTC:5", "ETH:3"]), {"BTC": 5.0, "ETH": 3.0})
+        self.assertEqual(self.e.parse_split(["BTC=5,ETH=3,5"]), {"BTC": 5.0, "ETH": 3.5})
+        self.assertEqual(self.e.parse_split(["btc", "4", "sol", "2"]), {"BTC": 4.0, "SOL": 2.0})
+        self.assertEqual(self.e.parse_split(["BTC:50%", "ETH:50%"]), {"BTC": round(base / 2, 2), "ETH": round(base / 2, 2)})
+        for bad in (["ZZZ:5"], ["BTC:abc"], ["BTC"], ["BTC:0"]):
+            with self.assertRaises(Exception):
+                self.e.parse_split(bad)
+
+    def test_split_buy_flow_and_week_replacement(self):
+        out = self.web.run(text="/acheter")
+        datas = [b["data"] for row in out[0]["buttons"] for b in row]
+        self.assertIn("cmd:split", datas)
+        out = self.web.run(button="cmd:split")
+        presets = [b["data"] for row in out[0]["buttons"] for b in row]
+        self.assertIn("splitp:cibles", presets)
+        out = self.web.run(text="/acheter BTC:5 ETH:3")
+        self.assertIn("Remplace l'achat automatique", out[0]["html"])
+        ok = out[0]["buttons"][0][0]["data"]
+        out = self.web.run(button=ok)
+        self.assertIn("Achats effectués", out[0]["html"])
+        trades = {t["asset"]: t["eur"] for t in self.e.store.trades()}
+        self.assertEqual(set(trades), {"BTC", "ETH"})
+        self.assertAlmostEqual(trades["BTC"], 5.0)
+        self.assertIn("expirée", self.web.run(button=ok)[0]["html"])  # pas de double achat
+        # l'achat automatique de la semaine est remplacé
+        self.e.tick()
+        self.assertEqual(len(self.e.store.trades()), 2)
+
+    def test_split_guards(self):
+        self.assertIn("budget restant", self.web.run(text="/acheter BTC:20 ETH:20")[0]["html"])
+        self.assertIn("maximum par ordre", self.web.run(text="/acheter BTC:25")[0]["html"])
+        self.e.store.set("paper_balances", {"EUR": 4})
+        self.assertIn("solde insuffisant", self.web.run(text="/acheter BTC:5")[0]["html"])
+        self.assertEqual(self.e.store.trades(), [])
+
+    def test_presets_by_targets(self):
+        presets, total = self.e.split_presets()
+        self.assertAlmostEqual(sum(presets["cibles"].values()), total, places=2)
+        self.assertTrue(all(v >= 1 for v in presets["cibles"].values()))
+        self.assertEqual(presets["tout_BTC"], {"BTC": total})
+
+    def test_manual_proposed_buy_skips_extra_approval(self):
+        self.market.prices["SOL"] = 120.0  # achat renforcé (> 10 €) proposé
+        self.web.run(button="cmd:dca_now")
+        self.assertEqual(self.e.store.pending_approvals(), [])
+        self.assertEqual(self.e.store.trades()[0]["asset"], "SOL")
+
+
 class TestConfig(unittest.TestCase):
     def test_rejects_bad_values(self):
         from microinvest.config import ConfigError

@@ -220,8 +220,16 @@ td.wrap,th.wrap{white-space:normal;text-align:left}
     <div class="three">
       <div class="card"><h2>Achats</h2>
         <div class="btns"><button class="primary" data-cmd="/acheter">🛒 Acheter la part de la semaine</button>
+          <button id="a-split">✏️ Répartir moi-même</button>
           <button id="a-pause">⏸️ Pause</button><button data-cmd="/questions">❓ Questions en attente</button></div>
-        <p class="muted help">Les achats automatiques ont lieu chaque semaine. Ces boutons servent à agir tout de suite.</p></div>
+        <div id="split" style="display:none;margin-top:12px">
+          <p class="muted" style="margin:0 0 8px" id="split-hint"></p>
+          <div class="scroll"><table class="edit"><tbody id="t-split"></tbody></table></div>
+          <div class="form"><input id="split-new" placeholder="AVAX" style="width:80px" aria-label="Autre crypto"><input id="split-newv" type="number" min="0" step="0.5" placeholder="0" aria-label="Montant"> €<button id="split-addrow">+ Ligne</button></div>
+          <p style="margin:10px 0 4px">Total : <b id="split-total">0 €</b> <span class="muted" id="split-left"></span></p>
+          <div class="btns"><button id="split-target">📊 Selon mes cibles</button><button class="primary" id="split-go">🛒 Acheter cette répartition</button></div>
+        </div>
+        <p class="muted help">Les achats automatiques ont lieu chaque semaine. Acheter la part de la semaine ici remplace l'achat automatique de la semaine.</p></div>
 
       <div class="card"><h2>Analyse</h2>
         <div class="btns"><button data-cmd="/radar maj">🔭 Nouvelle analyse Radar</button><button data-cmd="/graphique 90">📉 Graphique</button></div>
@@ -331,7 +339,22 @@ function when(ts){
   return JOURS[d.getDay()] + " " + d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}) + " à " + h;
 }
 const store = { get(k,d){ try{ return localStorage.getItem(k) ?? d }catch(e){ return d } }, set(k,v){ try{ localStorage.setItem(k,v) }catch(e){} } };
-let labFilled = false;
+let labFilled = false, splitRows = null;
+function splitRender(){
+  const b=S.budget;
+  $("split-hint").textContent = `Part de la semaine proposée ≈ ${eur(b.weekly_base)} · budget restant du mois ${eur(b.remaining)} · max ${eur(S.config.budget.max_order_eur,0)} par crypto.`;
+  $("t-split").innerHTML = Object.entries(splitRows).map(([a,v])=>`<tr><td><b>${esc(a)}</b></td><td><input data-split="${esc(a)}" type="number" min="0" step="0.5" value="${v}"> €</td></tr>`).join("");
+  document.querySelectorAll("[data-split]").forEach(i=>i.oninput=()=>{ splitRows[i.dataset.split]=parseFloat(i.value)||0; splitTotal(); });
+  splitTotal();
+}
+function splitTotal(){ const t=Object.values(splitRows).reduce((x,y)=>x+(y||0),0); $("split-total").textContent=eur(t);
+  $("split-left").textContent = t > S.budget.remaining + 1e-9 ? "⚠️ au-dessus du budget restant" : ""; }
+function splitByTargets(){
+  const tg=S.config.targets, tot=Math.min(S.budget.weekly_base, S.budget.remaining), sum=Object.values(tg).reduce((x,y)=>x+y,0);
+  const ord=Object.keys(tg).sort((a,b)=>tg[b]-tg[a]); const r={}; ord.forEach(a=>r[a]=Math.round(tot*tg[a]/sum*100)/100);
+  ord.slice(1).forEach(a=>{ if(r[a]<1){ r[ord[0]]+=r[a]; r[a]=0; } });
+  r[ord[0]] = Math.round((tot - ord.slice(1).reduce((x,a)=>x+r[a],0))*100)/100; return r;
+}
 function fillLab(L){ $("lb-budget").value=L.budget; $("lb-max").value=L.max_order; $("lb-dip").value=L.dip; $("lb-mult").value=L.mult;
   $("lb-months").value=String(L.months||12); $("lb-targets").value=Object.entries(L.targets).map(([k,v])=>k+":"+v).join(", "); }
 let S = null, range = +store.get("mi-range", 90), rkind = store.get("mi-rkind","crypto"), rfilter = store.get("mi-rfilter","all");
@@ -594,6 +617,12 @@ async function load(){
   catch(e){ $("upd").textContent = "erreur de chargement : " + e; }
 }
 $("refresh").onclick = load;
+$("a-split").onclick = () => { const el=$("split"); const on = el.style.display==="none"; el.style.display = on ? "" : "none";
+  if(on){ splitRows = {}; Object.keys(S.config.targets).forEach(a=>splitRows[a]=0); splitRender(); } };
+$("split-target").onclick = () => { splitRows = Object.assign({}, splitRows, splitByTargets()); splitRender(); };
+$("split-addrow").onclick = () => { const a=$("split-new").value.trim().toUpperCase(); if(!a) return; splitRows[a]=parseFloat($("split-newv").value)||0; $("split-new").value=""; $("split-newv").value=""; splitRender(); };
+$("split-go").onclick = () => { const parts = Object.entries(splitRows).filter(([a,v])=>v>0).map(([a,v])=>a+":"+v);
+  if(!parts.length){ toast("Indique au moins un montant."); return; } cmd("/acheter " + parts.join(" "), "Achat réparti"); };
 $("lb-run").onclick = () => {
   const t = $("lb-targets").value.split(/[,;\s]+/).filter(x=>x).join(",");
   cmd(`/test budget=${$("lb-budget").value} max=${$("lb-max").value} baisse=${$("lb-dip").value} multi=${$("lb-mult").value} mois=${$("lb-months").value} cibles=${t}`, "Laboratoire");

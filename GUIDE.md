@@ -29,6 +29,22 @@ Les phases 1 à 6 se font **sans argent réel** (mode simulation). Le réel arri
 - **Tout se pilote depuis Telegram ou depuis l'interface web** (à la maison), avec des boutons : achats, pause, réglages, Radar, objectif, alertes, export fiscal, sauvegarde, clé Revolut X, mises à jour.
 - **Il veille pour toi** : message chaque matin (preuve qu'il tourne), alerte quand le solde Revolut X baisse, sauvegarde chaque nuit, vérification quotidienne que ses comptes correspondent à Revolut X.
 
+### Qui fait quoi : l'outil et toi
+
+| | Ce que fait l'outil, seul | Ce que tu fais | Temps pour toi |
+|---|---|---|---|
+| **Achats crypto** | Achat chaque semaine, choix de la crypto, garde-fous | Rien (ou « 🛒 Acheter » / « ✏️ Répartir » si tu veux décider) | 0 |
+| **Achats renforcés, opportunités** | Détecte les baisses, calcule le montant | Répondre ✅ / ❌ | ~10 s, 1 à 3 fois par mois |
+| **Ventes (prise de bénéfices)** | Détecte les gains de +40 %, ne vend jamais à perte | Répondre ✅ / ❌ | ~10 s, rare |
+| **Actions/ETF** | Rappel le 5 du mois, montants par ligne, suivi | Acheter dans l'appli Revolut, puis « ✅ Fait » | ~2 min par mois |
+| **Argent sur Revolut X** | Alerte quand le solde baisse | Déposer des euros sur Revolut X | ~2 min, tous les 1 à 2 mois |
+| **Surveillance** | Message du matin, gel à −25 %, vérification Revolut X, sauvegarde de nuit, Radar | Lire les alertes | 0 |
+| **Décisions de fond** | Radar, laboratoire, rapport du dimanche | Choisir les cibles, ajouter ou retirer des actifs, appliquer des réglages | Quand tu veux |
+| **Impôts** | Export CSV et calcul des plus-values | Reporter dans la déclaration (2086 si ventes, 3916-bis) | ~15 min par an |
+| **Mises à jour** | Tests, installation, retour arrière automatique | Appuyer sur « ⬆️ Installer » | ~30 s |
+
+En tout : **environ 5 minutes par mois**, plus quelques réponses ✅ / ❌.
+
 ### « Jamais en négatif » : ce qui est garanti, ce qui ne l'est pas
 
 Garanti par le code (et testé) :
@@ -308,6 +324,12 @@ Revolut n'a pas d'API pour les actions : cette partie reste manuelle, mais guid�
 - **🧪 Test sur 12 mois** : rejoue ta stratégie sur les vrais prix de l'année passée et la compare à un achat fixe.
 - **🧾 Export fiscal** : `/export 2026` → 2 fichiers CSV (toutes les opérations, plus-values crypto selon la méthode du formulaire 2086) + le résumé (exonération sous 305 € de ventes, impôt estimé).
 - **🛟 Sauvegarde** : sauvegarde complète sur le NAS + copie **sans aucun secret** envoyée sur Telegram (ou téléchargeable sur le web).
+
+### Choisir toi-même la répartition de la part de la semaine
+
+- Telegram : « 🛒 Acheter » → **✏️ Répartir autrement** → choisis une répartition (selon tes cibles, tout sur une crypto, moitié-moitié), ou écris la tienne : `/acheter BTC:5 ETH:3`, ou en % de la part de la semaine : `/acheter BTC:60% SOL:40%`.
+- Web : onglet **Actions** → **✏️ Répartir moi-même** → saisis un montant par crypto (bouton **📊 Selon mes cibles** pour préremplir), puis **🛒 Acheter cette répartition**.
+- Un résumé est toujours affiché avant l'achat. Les garde-fous s'appliquent (budget du mois, maximum par ordre, solde disponible). Cet achat **remplace l'achat automatique de la semaine**.
 
 ### Laboratoire : tester d'autres réglages sur le passé
 

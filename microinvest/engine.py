@@ -275,24 +275,30 @@ class Engine:
         return None
 
     # -------------------------------------------------------------------- achat
-    def buy(self, asset, amount, reason, automatic=True):
+    def buy(self, asset, amount, reason, automatic=True, quiet=False):
         with self.lock:
             refus = self.check_buy(asset, amount, automatic)
+            self.last_refusal = refus
             if refus:
                 self.log("warn", "Achat %s %s refusé : %s" % (eur(amount), asset, refus))
-                self.notify("⛔ <b>Achat annulé</b> — %s de %s\n<b>Pourquoi</b> : %s\n➡️ <b>Que faire</b> : %s" % (
-                    eur(amount), F.esc(asset), F.esc(refus), F.esc(hint_for(refus))))
+                if not quiet:
+                    self.notify("⛔ <b>Achat annulé</b> — %s de %s\n<b>Pourquoi</b> : %s\n➡️ <b>Que faire</b> : %s" % (
+                        eur(amount), F.esc(asset), F.esc(refus), F.esc(hint_for(refus))))
                 return None
             try:
                 o = self.broker.market_order(asset, "buy", quote_eur=amount)
             except InsufficientFunds as e:
-                self.notify("⛔ <b>Achat refusé par Revolut X</b> : solde insuffisant.\n➡️ <b>Que faire</b> : dépose des euros "
-                            "sur Revolut X.\n<i>%s</i>" % F.esc(e))
+                self.last_refusal = "solde insuffisant sur Revolut X"
+                if not quiet:
+                    self.notify("⛔ <b>Achat refusé par Revolut X</b> : solde insuffisant.\n➡️ <b>Que faire</b> : dépose des euros "
+                                "sur Revolut X.\n<i>%s</i>" % F.esc(e))
                 self.log("warn", "Fonds insuffisants : %s" % e)
                 return None
             except BrokerError as e:
-                self.notify("⚠️ <b>Échec de l'achat %s</b>\n<i>%s</i>\n➡️ Rien n'a été dépensé. Je réessaierai au prochain créneau." % (
-                    F.esc(asset), F.esc(e)))
+                self.last_refusal = str(e)
+                if not quiet:
+                    self.notify("⚠️ <b>Échec de l'achat %s</b>\n<i>%s</i>\n➡️ Rien n'a été dépensé. Je réessaierai au prochain créneau." % (
+                        F.esc(asset), F.esc(e)))
                 self.log("error", "Échec achat %s : %s" % (asset, e))
                 return None
             qty, spent = normalize_fill(o, asset, "buy", self.cfg["quote"])
@@ -308,7 +314,9 @@ class Engine:
                 F.month_name(self.clock()), F.bar(bs["spent"] / bs["monthly"] if bs["monthly"] else 1),
                 eur(bs["spent"]), eur(bs["monthly"])))
             self.log("info", "Acheté %s de %s (%s)" % (eur(spent), asset, reason))
-            self.notify(msg)
+            if not quiet:
+                self.notify(msg)
+            o["spent"], o["qty_net"] = spent, qty
             return o
 
     # -------------------------------------------------------------------- vente
@@ -454,7 +462,7 @@ class Engine:
                 self.notify("ℹ️ <b>Pas d'achat cette semaine</b> : le budget crypto de %s est déjà utilisé.\n"
                             "Les achats reprennent le 1er." % F.month_name(self.clock()))
                 return "Budget du mois épuisé."
-            if plan["amount"] > self.cfg["budget"]["approval_above_eur"]:
+            if plan["amount"] > self.cfg["budget"]["approval_above_eur"] and not manual:  # en manuel, tu viens de confirmer
                 self.request_approval("buy", {"asset": plan["asset"], "amount": plan["amount"], "reason": plan["reason"]},
                                       "🛒 <b>Achat renforcé proposé</b>\n<b>%s de %s</b>\n💡 %s\n\n"
                                       "<i>C'est plus que l'achat habituel (≈ %s), donc je te demande.</i>" % (
@@ -462,7 +470,132 @@ class Engine:
                                           eur(self.budget_status()["weekly_base"])))
                 return "Achat exceptionnel : validation demandée sur Telegram."
             o = self.buy(plan["asset"], plan["amount"], plan["reason"], automatic=not manual)
+            if o and manual and self.mark_week_bought():
+                return "Achat exécuté. Il remplace l'achat automatique de cette semaine."
             return "Achat exécuté." if o else "Achat refusé (voir message)."
+
+    def mark_week_bought(self):
+        """Un achat manuel de « la part de la semaine » remplace l'achat automatique de la semaine."""
+        week = time.strftime("%G-%V", time.localtime(self.clock()))
+        if self.store.get("dca_week") == week:
+            return False
+        self.store.set("dca_week", week)
+        return True
+
+    def split_presets(self, total=None):
+        """Répartitions proposées pour la part de la semaine."""
+        bs = self.budget_status()
+        total = round(min(total or bs["weekly_base"], bs["remaining"], self.cfg["budget"]["max_order_eur"] * 10), 2)
+        t = self.cfg["dca"]["targets"]
+        order = sorted(t, key=lambda a: -t[a])
+        tsum = float(sum(t.values()))
+        out = {}
+        if total <= 0:
+            return out, total
+        by_target = {a: round(total * t[a] / tsum, 2) for a in order}
+        small = [a for a, v in by_target.items() if v < 1.0]  # trop petit pour un ordre : reporté sur la plus grosse ligne
+        for a in small:
+            by_target[order[0]] = round(by_target[order[0]] + by_target.pop(a), 2)
+        diff = round(total - sum(by_target.values()), 2)
+        by_target[order[0]] = round(by_target[order[0]] + diff, 2)
+        out["cibles"] = by_target
+        for a in order[:2]:
+            out["tout_" + a] = {a: total}
+        if len(order) >= 2:
+            half = round(total / 2, 2)
+            out["moitie"] = {order[0]: round(total - half, 2), order[1]: half}
+        return out, total
+
+    def parse_split(self, args):
+        """« BTC:5 ETH:3 », « BTC=5,ETH=3 », « BTC 5 ETH 3 » ou en % : « BTC:60% ETH:40% »."""
+        import re
+        txt = re.sub(r"(\d),(\d)", r"\1.\2", " ".join(args))  # 3,5 € → 3.5
+        txt = txt.replace(",", " ").replace("=", ":").replace(";", " ")
+        toks = txt.split()
+        pairs, i = [], 0
+        while i < len(toks):
+            tok = toks[i]
+            if ":" in tok:
+                a, _, v = tok.partition(":")
+                if not v and i + 1 < len(toks):
+                    v, i = toks[i + 1], i + 1
+            elif i + 1 < len(toks):
+                a, v = tok, toks[i + 1]
+                i += 1
+            else:
+                raise ValueError("« %s » sans montant" % tok)
+            pairs.append((a.strip().upper(), v.strip()))
+            i += 1
+        if not pairs:
+            raise ValueError("aucune crypto indiquée")
+        base = self.budget_status()["weekly_base"]
+        alloc = {}
+        for a, v in pairs:
+            pctv = v.endswith("%")
+            try:
+                x = float(v.rstrip("%").replace("€", "").replace(",", "."))
+            except ValueError:
+                raise ValueError("montant « %s » invalide" % v)
+            amount = round(base * x / 100.0, 2) if pctv else round(x, 2)
+            if amount <= 0:
+                raise ValueError("montant nul pour %s" % a)
+            self.market.pair_info(a)  # la crypto doit exister sur Revolut X
+            alloc[a] = round(alloc.get(a, 0) + amount, 2)
+        return alloc
+
+    def check_split(self, alloc):
+        bs = self.budget_status()
+        total = round(sum(alloc.values()), 2)
+        if total > bs["remaining"] + 1e-9:
+            return "total %s supérieur au budget restant du mois (%s)" % (eur(total), eur(bs["remaining"]))
+        for a, v in alloc.items():
+            if v > self.cfg["budget"]["max_order_eur"] + 1e-9:
+                return "%s : %s dépasse le maximum par ordre (%s)" % (a, eur(v), eur(self.cfg["budget"]["max_order_eur"]))
+        try:
+            avail = self.broker.balances().get(self.cfg["quote"], 0.0) - self.cfg["budget"]["keep_reserve_eur"]
+        except BrokerError as e:
+            return "solde Revolut X illisible (%s)" % e
+        if avail < total - 1e-9:
+            return "solde insuffisant sur Revolut X : %s disponibles pour %s" % (eur(avail), eur(total))
+        return None
+
+    def split_summary(self, alloc):
+        bs = self.budget_status()
+        total = sum(alloc.values())
+        rows = [[a, F.teur(v)] for a, v in sorted(alloc.items(), key=lambda kv: -kv[1])]
+        week = time.strftime("%G-%V", time.localtime(self.clock()))
+        note = ("Remplace l'achat automatique de cette semaine." if self.store.get("dca_week") != week
+                else "L'achat automatique de cette semaine a déjà eu lieu : celui-ci s'y ajoute.")
+        return "%s\nTotal <b>%s</b> · budget restant après : %s\n<i>%s</i>" % (
+            F.pre(F.table(rows)), eur(total), eur(max(0, bs["remaining"] - total)), note)
+
+    def buy_split(self, alloc, reason="répartition choisie"):
+        with self.lock:
+            refus = self.check_split(alloc)
+            if refus:
+                return "⛔ <b>Achat annulé</b> : %s.\n➡️ <b>Que faire</b> : %s" % (F.esc(refus), F.esc(hint_for(refus)))
+            done, failed = [], []
+            for a, v in sorted(alloc.items(), key=lambda kv: -kv[1]):
+                o = self.buy(a, v, reason, automatic=False, quiet=True)
+                if o:
+                    done.append((a, o["spent"], o["qty_net"], o["price"]))
+                else:
+                    failed.append((a, v, self.last_refusal or "refusé"))
+            replaced = bool(done) and self.mark_week_bought()
+        bs = self.budget_status()
+        tag = " · 🧪 simulation" if self.mode == "paper" else ""
+        lines = ["✅ <b>Achats effectués</b>%s" % tag if done else "⛔ <b>Aucun achat effectué</b>"]
+        if done:
+            lines.append(F.pre(F.table([[a, F.teur(sp), F.num(q, 8).replace(F.NBSP, " ")] for a, sp, q, pr in done],
+                                       ["<", ">", ">"])))
+        for a, v, why in failed:
+            lines.append("⛔ %s %s : %s" % (F.esc(a), eur(v), F.esc(why)))
+        lines.append("💡 %s%s" % (F.esc(reason), " · remplace l'achat automatique de cette semaine" if replaced else ""))
+        lines.append("💶 Budget de %s : %s %s / %s" % (F.month_name(self.clock()), F.bar(bs["spent"] / bs["monthly"] if bs["monthly"] else 1),
+                                                     eur(bs["spent"]), eur(bs["monthly"])))
+        text = "\n".join(lines)
+        self.log("info", "Achat réparti : %s" % ", ".join("%s %s" % (a, eur(sp)) for a, sp, q, pr in done))
+        return text
 
     # -------------------------------------------------------- surveillances
     def check_drawdown(self):
