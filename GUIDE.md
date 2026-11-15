@@ -179,6 +179,7 @@ L'interface refuse toute connexion qui ne vient pas de ton réseau local. Il n'y
 1. Sur Telegram : **⚙️ Menu** → **⚙️ Système** → **🌐 Interface web**. Le bot t'envoie l'adresse, par exemple `http://192.168.1.50:8088`.
 2. Ouvre-la depuis un appareil connecté au **Wi-Fi de la maison**. Identifiant : `admin`. Mot de passe : celui de la phase 3.
 3. Tu y trouves 5 onglets : **Portefeuille**, **Radar**, **Actions** (tous les boutons de commande), **Historique**, **Réglages** (modifiables directement). Tout ce qui se fait sur Telegram se fait aussi ici.
+4. Sur le web, un clic exécute l'action tout de suite, sans fenêtre de confirmation. Le résultat s'affiche dans une notification en haut à droite (en bas sur téléphone). Les actions lourdes de conséquences (passer en réel, remettre la simulation à zéro, version précédente, redémarrer, annuler une opération) demandent un 2e clic : le bouton affiche « ⚠️ Confirmer ? » pendant 4 secondes.
 3. Si tu avais créé une règle de *proxy inversé* ou une redirection de port pour Micro-invest, supprime-la.
 
 ### 6b. Brancher les mises à jour (une seule fois)

@@ -92,7 +92,15 @@ th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;le
 .kv{display:flex;flex-wrap:wrap;gap:6px 18px}.kv b{color:var(--ink)}
 input{font:inherit;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);width:110px}
 code{background:var(--chip);padding:1px 6px;border-radius:6px;font-size:13px}
-#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;display:none;max-width:90vw;z-index:10}
+#notes{position:fixed;top:64px;right:16px;z-index:20;display:flex;flex-direction:column;gap:10px;width:min(430px,calc(100vw - 32px));max-height:calc(100vh - 80px);overflow-y:auto;pointer-events:none}
+@media (max-width:560px){#notes{top:auto;bottom:12px;right:16px;flex-direction:column-reverse}}
+.note{pointer-events:auto;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:12px;padding:12px 14px 12px 14px;
+  box-shadow:0 8px 28px rgba(16,24,40,.16);animation:notein .18s ease-out}
+.note.ok{border-left-color:var(--good)}.note.err{border-left-color:var(--bad)}.note.wait{border-left-color:var(--muted)}
+.note-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;font-size:13px;color:var(--muted);font-weight:650}
+.note-x{border:0;background:transparent;color:var(--muted);font-size:16px;padding:0 4px;cursor:pointer}
+@keyframes notein{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+button.armed{background:var(--warn-soft);border-color:var(--warn);color:var(--warn);font-weight:650}
 .empty{padding:22px;text-align:center;color:var(--muted)}
 .stack>*+*{margin-top:12px}
 .grid>*,.two>*,.three>*{min-width:0}
@@ -104,12 +112,8 @@ select{font:inherit;padding:8px;border:1px solid var(--line);border-radius:10px;
 input.wide{width:100%}
 .form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
 .edit td{vertical-align:middle}.edit input,.edit select{width:110px}
-dialog{border:1px solid var(--line);border-radius:16px;background:var(--card);color:var(--ink);padding:0;width:min(560px,calc(100vw - 32px));max-height:85vh;box-shadow:0 10px 40px rgba(0,0,0,.25)}
-dialog::backdrop{background:rgba(10,12,16,.45)}
-.dlg-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
-.dlg-body{padding:16px 18px;overflow:auto;max-height:calc(85vh - 60px)}
-.msg{white-space:pre-wrap;margin:0 0 14px;line-height:1.55}
-.msg pre{background:var(--chip);padding:10px;border-radius:10px;overflow-x:auto;white-space:pre;font-size:13px}
+.msg{white-space:pre-wrap;margin:0 0 8px;line-height:1.5;font-size:14px}.msg:last-child{margin-bottom:0}
+.msg pre{background:var(--chip);padding:10px;border-radius:10px;overflow-x:auto;white-space:pre;font-size:13px;margin:6px 0}
 .msg img{max-width:100%;border-radius:10px;border:1px solid var(--line);margin-top:8px}
 .msg .btns{margin-top:10px}
 .busy{opacity:.6;pointer-events:none}
@@ -280,7 +284,7 @@ td.wrap,th.wrap{white-space:normal;text-align:left}
 
       <div class="card"><h2>Système</h2>
         <div class="btns"><button data-cmd="/maj">⬆️ Mise à jour</button><button data-cmd="/version">📦 Version</button>
-          <button data-cmd="/retour">↩️ Version précédente</button><button data-cmd="/redemarrer">🔄 Redémarrer</button>
+          <button data-cmd="/retour" data-risky="1">↩️ Version précédente</button><button data-cmd="/redemarrer" data-risky="1">🔄 Redémarrer</button>
           <button data-cmd="/mode">🔁 Simulation / réel</button></div></div>
 
       <div class="card"><h2>Revolut X et GitHub</h2>
@@ -320,8 +324,7 @@ td.wrap,th.wrap{white-space:normal;text-align:left}
     </div>
   </section>
 </div>
-<div id="toast" role="status"></div>
-<dialog id="dlg" aria-labelledby="dlg-t"><div class="dlg-head"><b id="dlg-t">Micro-invest</b><button class="icon-btn" id="dlg-x" aria-label="Fermer">✕</button></div><div class="dlg-body" id="dlg-b"></div></dialog>
+<div id="notes" aria-live="polite"></div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -359,36 +362,60 @@ function fillLab(L){ $("lb-budget").value=L.budget; $("lb-max").value=L.max_orde
   $("lb-months").value=String(L.months||12); $("lb-targets").value=Object.entries(L.targets).map(([k,v])=>k+":"+v).join(", "); }
 let S = null, range = +store.get("mi-range", 90), rkind = store.get("mi-rkind","crypto"), rfilter = store.get("mi-rfilter","all");
 
-function toast(m){const t=$("toast");t.textContent=m;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",4000);}
+/* ---------- notifications dans la page (aucune fenêtre) ---------- */
+function note(html, kind, title, sticky){
+  const n=document.createElement("div"); n.className="note "+(kind||"");
+  n.innerHTML=`<div class="note-head"><span>${esc(title||"Micro-invest")}</span><button class="note-x" aria-label="Fermer">✕</button></div><div class="note-body">${html}</div>`;
+  n.querySelector(".note-x").onclick=()=>n.remove();
+  const box=$("notes"); box.prepend(n); while(box.children.length>5) box.lastChild.remove();
+  if(!sticky) n._t=setTimeout(()=>n.remove(), 7000);
+  return n;
+}
+function toast(m){ note(esc(m), "", "Micro-invest"); }
 async function post(path, body){
   try{
     const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-Requested-With":"microinvest"},body:JSON.stringify(body||{})});
-    const j = await r.json(); toast(j.message || j.error || "OK");
-  }catch(e){toast("Erreur : "+e);}
+    const j = await r.json(); note(esc(j.message || j.error || "OK"), j.error?"err":"ok", "Micro-invest");
+  }catch(e){ note("Erreur : "+esc(e), "err", "Micro-invest", true); }
   load();
 }
-
+/* Double clic pour les actions lourdes : le bouton affiche « Confirmer ? » pendant 4 s */
+function armed(btn){
+  if(btn.dataset.armed==="1"){ clearTimeout(btn._arm); btn.dataset.armed=""; btn.classList.remove("armed"); btn.textContent=btn._label; return true; }
+  btn._label=btn.textContent; btn.dataset.armed="1"; btn.classList.add("armed"); btn.textContent="⚠️ Confirmer ?";
+  btn._arm=setTimeout(()=>{ btn.dataset.armed=""; btn.classList.remove("armed"); btn.textContent=btn._label; }, 4000);
+  return false;
+}
 /* ---------- commandes (mêmes que Telegram) ---------- */
-const safe = h => esc(h).replace(/&lt;(\/?)(b|i|code|pre)&gt;/g, "<$1$2>");
-async function runCmd(payload, title){
-  const dlg=$("dlg"), body=$("dlg-b");
-  $("dlg-t").textContent = title || "Micro-invest";
-  body.innerHTML='<p class="muted">En cours…</p>'; if(!dlg.open){ try{ dlg.showModal(); }catch(e){ dlg.setAttribute("open",""); } }
+const safe = h => esc(h).replace(/&lt;(\/?)(b|i|code|pre)&gt;/g, "<$1$2>").replace(/<\/pre>\n+/g, "</pre>").replace(/\n+<pre>/g, "<pre>");
+// boutons de simple confirmation : exécutés tout de suite (le clic initial vaut confirmation)
+const AUTO = /^(cmd:dca_now|splitok:|applyok:|undook:|rmok:|addok:|simreset:|cmd:mode_live|cmd:mode_paper|cmd:rollback|cmd:restart)/;
+const RISKY_BTN = /^(cmd:ask_live|cmd:ask_paper|cmd:mode_live|cmd:mode_paper)/;
+async function runCmd(payload, title, pending, depth){
+  depth = depth||0;
+  const n = pending || note('<span class="muted">⏳ En cours…</span>', "wait", title, true);
   try{
     const r = await fetch("/api/cmd",{method:"POST",headers:{"Content-Type":"application/json","X-Requested-With":"microinvest"},body:JSON.stringify(payload)});
     const j = await r.json();
-    if(j.error){ body.innerHTML='<p class="msg">❌ '+esc(j.error)+'</p>'; return; }
-    const msgs = j.messages||[];
-    body.innerHTML = msgs.length ? msgs.map(m=>`<div class="msg">${safe(m.html||"")}${m.image?`<img src="${m.image}" alt="Graphique">`:""}${m.file?`<div style="margin-top:6px"><a href="${m.file}" download="${esc(m.filename)}">⬇️ ${esc(m.filename)}</a></div>`:""}${
-      (m.buttons||[]).length?`<div class="btns">${m.buttons.flat().map(b=>`<button data-btn="${esc(b.data)}">${esc(b.label)}</button>`).join("")}</div>`:""}</div>`).join("")
-      : '<p class="msg">✅ Fait.</p>';
-    body.querySelectorAll("[data-btn]").forEach(b=>b.onclick=()=>runCmd({button:b.dataset.btn}, title));
-  }catch(e){ body.innerHTML='<p class="msg">❌ Erreur : '+esc(e)+'</p>'; }
+    if(j.error) throw j.error;
+    let msgs = j.messages||[];
+    const conf = depth<2 && msgs.map(m=>(m.buttons||[]).flat().find(b=>AUTO.test(b.data))).find(Boolean);
+    if(conf){ return runCmd({button:conf.data}, title, n, depth+1); }
+    const body = msgs.length ? msgs.map(m=>`<div class="msg">${safe(m.html||"")}${m.image?`<img src="${m.image}" alt="Graphique">`:""}${m.file?`<div style="margin-top:6px"><a href="${m.file}" download="${esc(m.filename)}">⬇️ ${esc(m.filename)}</a></div>`:""}${
+      (m.buttons||[]).length?`<div class="btns">${m.buttons.flat().filter(b=>b.data!=="cmd:noop").map(b=>`<button data-btn="${esc(b.data)}">${esc(b.label)}</button>`).join("")}</div>`:""}</div>`).join("") : '<div class="msg">✅ Fait.</div>';
+    const text = msgs.map(m=>m.html||"").join(" ");
+    const bad = /^(❌|⛔)/.test(text.trim());
+    const rich = msgs.some(m=>m.image||m.file||(m.buttons||[]).some(r=>r.some(b=>b.data!=="cmd:noop")));
+    n.className = "note " + (bad ? "err" : "ok");
+    n.querySelector(".note-body").innerHTML = body;
+    clearTimeout(n._t); if(!bad && !rich) n._t=setTimeout(()=>n.remove(), 8000);
+    n.querySelectorAll("[data-btn]").forEach(b=>b.onclick=()=>{ if(RISKY_BTN.test(b.dataset.btn) && !armed(b)) return; runCmd({button:b.dataset.btn}, title, n); });
+  }catch(e){ n.className="note err"; n.querySelector(".note-body").innerHTML='<div class="msg">❌ '+esc(e)+'</div>'; }
   load();
 }
 const cmd = (text, title) => runCmd({text}, title);
-$("dlg-x").onclick = () => $("dlg").close();
-document.addEventListener("click", ev => { const b = ev.target.closest("[data-cmd]"); if(b){ cmd(b.dataset.cmd, b.textContent.trim()); } });
+document.addEventListener("click", ev => { const b = ev.target.closest("[data-cmd]"); if(!b) return;
+  if(b.dataset.risky && !armed(b)) return; cmd(b.dataset.cmd, (b._label||b.textContent).trim()); });
 
 /* ---------- onglets ---------- */
 function showTab(t){
@@ -542,7 +569,7 @@ function render(s){
     <td>${t.kind==="etf"?"Action (manuel)":t.order_id==="adjust"?"Ajustement":t.side==="buy"?"Achat":"Vente"}</td><td class="${t.side==="sell"?"pos":""}">${eur(t.eur)}</td>
     <td>${canUndo(t)?`<button class="icon-btn" data-undo="${t.id}" aria-label="Annuler l'opération ${t.id}">🗑</button>`:""}</td></tr>`).join("")
     : `<tr><td colspan="5" class="empty">Aucune opération pour l'instant.</td></tr>`;
-  document.querySelectorAll("[data-undo]").forEach(b=>b.onclick=()=>runCmd({button:"undo:"+b.dataset.undo},"Annuler une opération"));
+  document.querySelectorAll("[data-undo]").forEach(b=>b.onclick=()=>{ if(!armed(b)) return; runCmd({button:"undo:"+b.dataset.undo},"Annuler une opération"); });
 
   // simulation
   $("sim-card").style.display = s.mode==="paper" ? "" : "none";
@@ -628,7 +655,7 @@ $("lb-run").onclick = () => {
   cmd(`/test budget=${$("lb-budget").value} max=${$("lb-max").value} baisse=${$("lb-dip").value} multi=${$("lb-mult").value} mois=${$("lb-months").value} cibles=${t}`, "Laboratoire");
 };
 $("lb-reset").onclick = () => { if(S) fillLab(S.lab_defaults); };
-$("sim-reset").onclick = () => cmd("/simulation reset " + ($("sim-amt").value || 100), "Simulation");
+$("sim-reset").onclick = ev => { if(!armed(ev.currentTarget)) return; cmd("/simulation reset " + ($("sim-amt").value || 100), "Simulation"); };
 $("sim-bal").onclick = () => { const a=$("sim-amt").value; if(a!=="") cmd("/simulation solde " + a, "Simulation"); };
 $("g-save").onclick = () => { const a=$("g-amt").value; if(a>0) cmd("/objectif "+a+" "+($("g-date").value||""), "Objectif"); };
 $("g-del").onclick = () => cmd("/objectif 0", "Objectif");

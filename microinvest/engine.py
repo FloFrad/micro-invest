@@ -314,6 +314,7 @@ class Engine:
                 F.month_name(self.clock()), F.bar(bs["spent"] / bs["monthly"] if bs["monthly"] else 1),
                 eur(bs["spent"]), eur(bs["monthly"])))
             self.log("info", "Acheté %s de %s (%s)" % (eur(spent), asset, reason))
+            self.last_buy_msg = msg
             if not quiet:
                 self.notify(msg)
             o["spent"], o["qty_net"] = spent, qty
@@ -469,10 +470,15 @@ class Engine:
                                           eur(plan["amount"]), F.esc(plan["asset"]), F.esc(plan["reason"]),
                                           eur(self.budget_status()["weekly_base"])))
                 return "Achat exceptionnel : validation demandée sur Telegram."
-            o = self.buy(plan["asset"], plan["amount"], plan["reason"], automatic=not manual)
-            if o and manual and self.mark_week_bought():
-                return "Achat exécuté. Il remplace l'achat automatique de cette semaine."
-            return "Achat exécuté." if o else "Achat refusé (voir message)."
+            # en manuel, le détail est renvoyé à celui qui a demandé (Telegram ou web) : pas de double message
+            o = self.buy(plan["asset"], plan["amount"], plan["reason"], automatic=not manual, quiet=manual)
+            if not o:
+                why = self.last_refusal or "voir le journal"
+                return "⛔ <b>Achat refusé</b> : %s\n➡️ <b>Que faire</b> : %s" % (F.esc(why), F.esc(hint_for(why)))
+            detail = getattr(self, "last_buy_msg", "✅ Achat effectué.")
+            if manual and self.mark_week_bought():
+                return detail + "\n<i>Il remplace l'achat automatique de cette semaine.</i>"
+            return detail
 
     def mark_week_bought(self):
         """Un achat manuel de « la part de la semaine » remplace l'achat automatique de la semaine."""

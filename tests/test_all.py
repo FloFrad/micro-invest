@@ -1485,6 +1485,21 @@ class TestCustomSplit(Base):
         self.assertEqual(self.e.store.trades()[0]["asset"], "SOL")
 
 
+class TestNoDuplicateMessages(Base):
+    def test_manual_buy_single_message_on_telegram(self):
+        sent = []
+        bot = TelegramBot("T", "42", self.e, api=lambda t, m, p=None, timeout=20: sent.append((m, p)) or {"message_id": 1},
+                          base_dir=self.dir)
+        self.e.notifier = bot
+        bot.handle({"update_id": 2, "callback_query": {"id": "c", "data": "cmd:dca_now", "message": {"chat": {"id": 42}}}})
+        msgs = [p["text"] for m, p in sent if m == "sendMessage"]
+        self.assertEqual(sum("Achat effectué" in t for t in msgs), 1)
+        self.e.store.set("paper_balances", {"EUR": 1})
+        bot.handle({"update_id": 3, "callback_query": {"id": "c", "data": "cmd:dca_now", "message": {"chat": {"id": 42}}}})
+        msgs = [p["text"] for m, p in sent if m == "sendMessage"]
+        self.assertEqual(sum("refusé" in t for t in msgs), 1)
+
+
 class TestConfig(unittest.TestCase):
     def test_rejects_bad_values(self):
         from microinvest.config import ConfigError
