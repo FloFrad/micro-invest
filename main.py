@@ -272,7 +272,9 @@ def cmd_run():
     else:
         log.warning("Telegram non configuré : aucune alerte ne sera envoyée")
     from microinvest import web
-    web.start(engine, cfg["web"]["host"], cfg["web"]["port"], cfg["web"]["password"])
+    from microinvest.telegram_bot import WebCommands
+    web.start(engine, cfg["web"]["host"], cfg["web"]["port"], cfg["web"]["password"],
+              commands=WebCommands(engine, updater=updater, restart=restart, base_dir=BASE))
 
     signal.signal(signal.SIGTERM, lambda *a: stop.set())
     signal.signal(signal.SIGINT, lambda *a: stop.set())

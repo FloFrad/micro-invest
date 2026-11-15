@@ -137,6 +137,8 @@ class Base(unittest.TestCase):
         self.stocks = FakeStocks()
         self.e.radar = Radar(self.e, stocks=self.stocks, clock=self.clock)
         self.e.cfg["radar"]["enabled"] = False  # activé seulement dans TestRadar
+        for k in ("daily", "backup", "reconcile"):  # testés à part (TestReliability)
+            self.e.cfg[k]["enabled"] = False
 
     def tearDown(self):
         r = getattr(self.e, "radar", None)
@@ -1058,6 +1060,265 @@ class TestFormatting(unittest.TestCase):
                 check(a["text"])
         finally:
             b.tearDown()
+
+
+class TestReliability(Base):
+    def test_daily_message(self):
+        self.e.cfg["daily"]["enabled"] = True
+        self.clock.t = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
+        self.e.tick()
+        self.assertIn("Bonjour", self.notifier.last())
+        self.assertIn("achat crypto à 10 h", self.notifier.last())
+        n = len(self.notifier.msgs)
+        self.e.tick()
+        self.assertEqual(len(self.notifier.msgs), n)  # une seule fois par jour
+
+    def test_low_balance_alert(self):
+        self.e.store.set("paper_balances", {"EUR": 10.0})
+        self.e.check_low_balance()
+        self.assertIn("Solde bas", self.notifier.last())
+        n = len(self.notifier.msgs)
+        self.e.check_low_balance()
+        self.assertEqual(len(self.notifier.msgs), n)  # pas plus d'une alerte tous les 3 jours
+
+    def test_backup_full_and_without_secrets(self):
+        import io
+        import zipfile
+        from microinvest import backup
+        with open(self.cfg_path, "w") as f:
+            json.dump({"mode": "paper", "revolutx": {"api_key": "SECRET-KEY"}, "telegram": {"token": "TG-SECRET", "chat_id": "1"}}, f)
+        os.makedirs(os.path.join(self.dir, "keys"))
+        with open(os.path.join(self.dir, "keys", "private.pem"), "w") as f:
+            f.write("PRIVATE")
+        self.e.run_dca()
+        path = self.e.do_backup()
+        z = zipfile.ZipFile(path)
+        self.assertIn("keys/private.pem", z.namelist())
+        self.assertIn("data/paper.db", z.namelist())
+        self.assertIn(b"SECRET-KEY", z.read("config.json"))
+        light = zipfile.ZipFile(io.BytesIO(backup.build_zip(self.dir, with_secrets=False)))
+        self.assertNotIn("keys/private.pem", light.namelist())
+        self.assertNotIn(b"SECRET-KEY", light.read("config.json"))
+        self.assertNotIn(b"TG-SECRET", light.read("config.json"))
+        db = light.read("data/paper.db")
+        self.assertTrue(db.startswith(b"SQLite format 3"))
+        for i in range(20):  # rotation : 14 gardées
+            backup.save_local(self.dir, now=time.time() + i * 86400)
+        self.assertEqual(len(backup.list_local(self.dir)), 14)
+
+    def test_reconcile_detects_and_fixes(self):
+        self.e.run_dca()
+        txt, btn = self.e.reconcile()
+        self.assertIn("tout correspond", txt)
+        b = self.e.broker.balances()
+        b["BTC"] = b["BTC"] / 2  # quelqu'un a vendu la moitié à la main
+        self.e.store.set("paper_balances", b)
+        txt, btn = self.e.reconcile()
+        self.assertIn("Écart", txt)
+        self.assertEqual(btn[0][0][1], "cmd:reconcile_fix")
+        self.assertIn("aligné", self.e.reconcile_fix())
+        txt, btn = self.e.reconcile()
+        self.assertIn("tout correspond", txt)
+        # l'ajustement n'est pas une vente imposable
+        from microinvest import tax
+        self.assertEqual(tax.plus_values(self.e.store), [])
+
+    def test_daily_reconcile_silent_when_ok(self):
+        self.e.cfg["reconcile"]["enabled"] = True
+        self.e.run_dca()
+        self.e.tick()
+        self.assertFalse(any("Écart" in m for m, _ in self.notifier.msgs))
+        self.assertTrue(self.e.store.get("reconcile_last")["ok"])
+
+
+class TestTaxAndBacktest(Base):
+    def test_french_capital_gains(self):
+        from microinvest import tax
+        st = self.e.store
+        st.add_trade("BTC", "buy", 0.01, 500, 50000, "a")
+        st.add_trade("ETH", "buy", 0.2, 500, 2500, "a")
+        # vente de 300 € alors que le portefeuille global vaut 1 500 €
+        st.add_trade("BTC", "sell", 0.004, 300, 75000, "b", "o1", portfolio_value=1500)
+        cs = tax.plus_values(st)
+        self.assertEqual(len(cs), 1)
+        self.assertAlmostEqual(cs[0]["acq_fraction"], 1000 * 300 / 1500)  # 200
+        self.assertAlmostEqual(cs[0]["pv"], 100)
+        st.add_trade("ETH", "sell", 0.1, 400, 4000, "c", "o2", portfolio_value=1600)
+        cs = tax.plus_values(st)
+        self.assertAlmostEqual(cs[1]["acq_before"], 800)
+        self.assertAlmostEqual(cs[1]["pv"], 400 - 800 * 400 / 1600)  # 200
+        y = cs[0]["year"]
+        smr = tax.year_summary(st, y)
+        self.assertAlmostEqual(smr["pv"], 300)
+        self.assertFalse(smr["exempt"])
+        self.assertAlmostEqual(smr["tax_estimate"], 90)
+        csv_txt = tax.plus_values_csv(st, y).decode("utf-8-sig")
+        self.assertIn("Valeur globale du portefeuille", csv_txt)
+        self.assertIn("100,00", csv_txt)
+        ops = tax.operations_csv(st).decode("utf-8-sig")
+        self.assertEqual(len(ops.strip().splitlines()), 5)
+
+    def test_exemption_under_305(self):
+        from microinvest import tax
+        st = self.e.store
+        st.add_trade("BTC", "buy", 0.01, 100, 10000, "a")
+        st.add_trade("BTC", "sell", 0.005, 80, 16000, "b", "o", portfolio_value=160)
+        smr = tax.year_summary(st, time.localtime(time.time()).tm_year)
+        self.assertTrue(smr["exempt"])
+        self.assertEqual(smr["tax_estimate"], 0)
+
+    def test_sell_records_portfolio_value(self):
+        self.e.cfg["take_profit"]["min_position_eur"] = 1
+        self.e.run_dca(manual=True)
+        self.market.prices["BTC"] *= 2
+        self.e._prices_ts = 0
+        self.e.sell("BTC", 50, "test")
+        sell = [t for t in self.e.store.all_trades() if t["side"] == "sell"][0]
+        self.assertGreater(sell["portfolio_value"], sell["eur"])
+
+    def test_backtest(self):
+        self.market.history = {"BTC": series("up_pullback", start=40000), "ETH": series("down", start=3000),
+                               "SOL": series("hot", start=100), "XRP": series("flat", start=0.5),
+                               "ADA": series("down", start=0.5), "LINK": series("up_pullback", start=10)}
+        res, image = self.e.run_backtest()
+        self.assertTrue(image.startswith(b"\x89PNG"))
+        self.assertGreater(res["smart"]["invested"], 0)
+        self.assertLessEqual(res["smart"]["invested"], res["simple"]["invested"] * 1.01 + 40)
+        self.assertGreater(res["weeks"], 40)
+        txt = self.e.backtest_text(res)
+        self.assertIn("DCA intelligent", txt)
+        self.assertIn("ne préjugent pas", txt)
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "data", "backtest.png")))
+
+
+class TestComfort(Base):
+    def test_price_alerts(self):
+        aid = self.e.add_price_alert("btc", "<", 55000)
+        self.e.check_price_alerts()
+        self.assertEqual(len(self.e.price_alerts()), 1)  # 60 000 : pas encore
+        self.market.prices["BTC"] = 54000
+        self.e.check_price_alerts()
+        self.assertEqual(self.e.price_alerts(), [])
+        self.assertIn("Alerte prix", self.notifier.last())
+        self.assertEqual(self.notifier.msgs[-1][1][0][0][1], "cmd:alert_re:BTC:lt:55000.0")
+        with self.assertRaises(Exception):
+            self.e.add_price_alert("NOPE", ">", 1)
+
+    def test_goal(self):
+        self.assertIsNone(self.e.goal_status())
+        self.e.set_goal(1000, "2027-11")
+        self.e.run_dca()
+        g = self.e.goal_status()
+        self.assertEqual(g["months"], 12)
+        self.assertAlmostEqual(g["projected"], g["current"] + 50 * 12)
+        self.assertGreater(g["needed"], 50)
+        self.assertIn("Il faudrait", self.e.goal_text())
+        self.assertIn("Objectif", self.e.status_text())
+
+    def test_chart_png(self):
+        self.assertIsNone(self.e.portfolio_chart_png())
+        self.e.run_dca()
+        for k in range(5):
+            self.e.store.snapshot(8 + k, 8)
+            self.clock.t += 3600
+        png = self.e.portfolio_chart_png(90)
+        self.assertTrue(png.startswith(b"\x89PNG"))
+
+    def test_weekly_report_with_photo(self):
+        photos = []
+        self.notifier.send_photo = lambda png, caption="", buttons=None: photos.append(caption)
+        self.e.run_dca()
+        for k in range(3):
+            self.e.store.snapshot(8 + k, 8)
+        self.clock.t = time.mktime((2026, 11, 8, 19, 5, 0, 0, 0, -1))
+        self.e.tick()
+        self.assertTrue(photos and "Ta semaine" in photos[0])
+
+    def test_radar_changes(self):
+        from microinvest.radar import Radar
+        self.e.cfg["dca"]["targets"]["ADA"] = 5
+        r = self.e.get_radar()
+        prev = {"crypto": [{"symbol": "DOGE", "label": "😐 Neutre"}, {"symbol": "ADA", "label": "👀 À surveiller"}], "stocks": []}
+        mk = lambda sym, label: {"symbol": sym, "name": sym, "kind": "crypto", "score": 70, "label": label, "reasons": ["x"]}
+        data = {"crypto": [mk("DOGE", "⭐ Intéressant"), mk("ADA", "⛔ À éviter"), mk("BTC", "⭐ Intéressant")], "stocks": []}
+        prev["crypto"].append({"symbol": "BTC", "label": "⭐ Intéressant"})
+        text, buttons = r.changes_message(prev, data)
+        self.assertIn("DOGE", text)
+        self.assertIn("ADA", text)
+        self.assertNotIn("BTC", text)  # déjà ⭐ avant
+        datas = [b[1] for row in buttons for b in row]
+        self.assertIn("add:c:DOGE", datas)
+        self.assertIn("rm:c:ADA", datas)
+        self.assertIsNone(r.changes_message(None, data))
+        self.assertIsNone(r.changes_message(data, data))
+
+
+class TestWebCommands(Base):
+    def setUp(self):
+        super().setUp()
+        from microinvest.telegram_bot import WebCommands
+        self.tg = []
+        self.notifier.send_photo = lambda *a, **k: self.tg.append(("photo", a))
+        self.web = WebCommands(self.e, base_dir=self.dir)
+
+    def test_commands_and_buttons(self):
+        out = self.web.run(text="/statut")
+        self.assertIn("Statut", out[0]["html"])
+        out = self.web.run(text="acheter")  # le « / » est facultatif
+        self.assertEqual(out[0]["buttons"][0][0]["data"], "cmd:dca_now")
+        self.web.run(button="cmd:dca_now")
+        self.assertEqual(len(self.e.store.trades()), 1)
+        out = self.web.run(text="/regler budget_crypto 42")
+        self.assertIn("42", out[0]["html"])
+        self.assertEqual(self.e.cfg["budget"]["monthly_crypto_eur"], 42)
+        out = self.web.run(text="/export")
+        files = [m for m in out if m.get("file")]
+        self.assertEqual(len(files), 2)
+        self.assertIn(files[0]["file"].rsplit("/", 1)[1], self.web.files)
+        out = self.web.run(text="/sauvegarde")
+        self.assertTrue(any(m.get("filename", "").endswith(".zip") for m in out))
+        out = self.web.run(text="/objectif 500 2027-06")
+        self.assertIn("500", out[0]["html"])
+        out = self.web.run(text="/alerte BTC < 50000")
+        self.assertIn("Alerte créée", out[0]["html"])
+        out = self.web.run(text="/alertes")
+        self.assertTrue(out[0]["buttons"])
+        self.web.run(button=out[0]["buttons"][0][0]["data"])
+        self.assertEqual(self.e.price_alerts(), [])
+        self.assertEqual(self.tg, [])  # rien n'est parti sur Telegram
+
+    def test_test12_runs_synchronously_on_web(self):
+        self.market.history = {a: series("up_pullback", start=p) for a, p in BASE_PRICES.items()}
+        out = self.web.run(text="/test")
+        self.assertTrue(any(m.get("image") for m in out))
+
+    def test_http_endpoints(self):
+        from microinvest import web
+        import socket
+        sk = socket.socket()
+        sk.bind(("127.0.0.1", 0))
+        port = sk.getsockname()[1]
+        sk.close()
+        srv = web.start(self.e, "127.0.0.1", port, "pw", commands=self.web)
+        base = "http://127.0.0.1:%d" % port
+        auth = {"Authorization": "Basic " + base64.b64encode(b"a:pw").decode()}
+        h = dict(auth, **{"X-Requested-With": "microinvest", "Content-Type": "application/json"})
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(base + "/api/cmd", data=json.dumps({"text": "/export"}).encode(), headers=h))
+            msgs = json.loads(r.read())["messages"]
+            link = [m["file"] for m in msgs if m.get("file")][0]
+            r = urllib.request.urlopen(urllib.request.Request(base + link, headers=auth))
+            self.assertIn("attachment", r.headers["Content-Disposition"])
+            for path in ("/api/download/operations.csv", "/api/download/plusvalues-2026.csv", "/api/download/backup.zip"):
+                r = urllib.request.urlopen(urllib.request.Request(base + path, headers=auth))
+                self.assertEqual(r.status, 200, path)
+            st = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/state", headers=auth)).read())
+            for k in ("goal", "alerts", "settings", "backups", "reconcile"):
+                self.assertIn(k, st)
+            with self.assertRaises(urllib.error.HTTPError):  # sans en-tête anti-CSRF
+                urllib.request.urlopen(urllib.request.Request(base + "/api/cmd", data=b'{"text":"/pause"}', headers=auth))
+        finally:
+            srv.shutdown()
 
 
 class TestConfig(unittest.TestCase):

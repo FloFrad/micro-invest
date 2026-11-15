@@ -26,13 +26,17 @@ DEFAULTS = {
         "opportunity_threshold_pct": 15,
     },
     "take_profit": {"enabled": True, "gain_pct": 40, "sell_fraction_pct": 25, "min_position_eur": 20},
-    "safety": {"max_drawdown_pct": 25, "resume_above_pct": 15},
+    "safety": {"max_drawdown_pct": 25, "resume_above_pct": 15, "low_balance_weeks": 2},
     "etf": {"enabled": True, "name": "iShares Core MSCI World (IWDA)", "day_of_month": 5, "hour": 18},
     "approval_timeout_hours": 12,
     "weekly_report": {"weekday": 6, "hour": 19},
     "update": {"repo": "", "branch": "main", "token": ""},
     "stocks": {"targets": {"IWDA.AS": 100}, "min_line_eur": 5, "max_lines": 3},
     "radar": {"enabled": True, "hour": 7},
+    "daily": {"enabled": True, "hour": 8},
+    "backup": {"enabled": True, "hour": 3},
+    "reconcile": {"enabled": True, "hour": 9},
+    "goal": {"amount": 0, "date": ""},
 }
 
 
@@ -82,6 +86,14 @@ def validate(c):
         errs.append("stocks.max_lines : entre 1 et 10")
     if not 0 <= c["radar"]["hour"] <= 23:
         errs.append("radar.hour : 0 à 23")
+    g = c["goal"]
+    if not isinstance(g.get("amount"), (int, float)) or g["amount"] < 0:
+        errs.append("goal.amount doit être un nombre positif")
+    if g.get("date") and not (len(g["date"]) == 7 and g["date"][4] == "-" and g["date"][:4].isdigit() and g["date"][5:].isdigit()):
+        errs.append('goal.date doit avoir la forme "AAAA-MM"')
+    for k in ("daily", "backup", "reconcile"):
+        if not 0 <= c[k]["hour"] <= 23:
+            errs.append("%s.hour : 0 à 23" % k)
     repo = (c.get("update") or {}).get("repo", "")
     if repo and (repo.count("/") != 1 or " " in repo):
         errs.append('update.repo doit avoir la forme "proprietaire/nom-du-depot"')

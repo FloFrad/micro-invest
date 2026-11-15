@@ -95,7 +95,25 @@ code{background:var(--chip);padding:1px 6px;border-radius:6px;font-size:13px}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;display:none;max-width:90vw;z-index:10}
 .empty{padding:22px;text-align:center;color:var(--muted)}
 .stack>*+*{margin-top:12px}
-.grid>*,.two>*{min-width:0}
+.grid>*,.two>*,.three>*{min-width:0}
+.three{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+.btns button{flex:1 1 auto}
+.card p.help{margin:10px 0 0}
+select{font:inherit;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+input.wide{width:100%}
+.form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.edit td{vertical-align:middle}.edit input,.edit select{width:110px}
+dialog{border:1px solid var(--line);border-radius:16px;background:var(--card);color:var(--ink);padding:0;width:min(560px,calc(100vw - 32px));max-height:85vh;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+dialog::backdrop{background:rgba(10,12,16,.45)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.dlg-body{padding:16px 18px;overflow:auto;max-height:calc(85vh - 60px)}
+.msg{white-space:pre-wrap;margin:0 0 14px;line-height:1.55}
+.msg pre{background:var(--chip);padding:10px;border-radius:10px;overflow-x:auto;white-space:pre;font-size:13px}
+.msg img{max-width:100%;border-radius:10px;border:1px solid var(--line);margin-top:8px}
+.msg .btns{margin-top:10px}
+.busy{opacity:.6;pointer-events:none}
+.goalbar{margin-top:14px}
 td.wrap,th.wrap{white-space:normal}
 @media (max-width:560px){.tabs button{padding:8px 8px;font-size:14px}.big{font-size:30px}.card{padding:16px}}
 </style>
@@ -122,6 +140,7 @@ td.wrap,th.wrap{white-space:normal}
         <div><span class="muted">Actions/ETF</span><b id="k-stocks">—</b></div>
         <div><span class="muted">Solde Revolut X</span><b id="k-eur">—</b></div>
       </div>
+      <div class="meter goalbar" id="goal-hero" style="display:none"><div class="lbl"><span id="goal-lbl">Objectif</span><b id="goal-val"></b></div><div class="track"><i id="goal-bar" style="width:0"></i></div></div>
     </div>
     <div class="card">
       <h2 id="budget-title">Budget du mois</h2>
@@ -138,6 +157,7 @@ td.wrap,th.wrap{white-space:normal}
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="pf" aria-selected="true">Portefeuille</button>
     <button role="tab" data-tab="radar" aria-selected="false">Radar</button>
+    <button role="tab" data-tab="act" aria-selected="false">Actions</button>
     <button role="tab" data-tab="hist" aria-selected="false">Historique</button>
     <button role="tab" data-tab="rules" aria-selected="false">Réglages</button>
   </nav>
@@ -190,7 +210,58 @@ td.wrap,th.wrap{white-space:normal}
       </div>
       <div id="radar-list"><div class="empty">L'analyse tourne chaque matin. Sur Telegram : ⚙️ Menu → 🔭 Radar.</div></div>
       <p class="muted" style="margin:12px 0 0">Note sur 100 : tendance (40) · élan 90 j (20) · point d'entrée (25) · risque (15). Règles chiffrées, pas une prédiction.
-        Touche une ligne pour le détail. Pour ajouter un actif : bouton ➕ sous le Radar sur Telegram, ou <code>/cible SOL 5</code>.</p>
+        Touche une ligne pour le détail et le bouton « ➕ Ajouter à mon plan ».</p>
+    </div>
+  </section>
+
+  <!-- ACTIONS -->
+  <section class="panel" id="p-act">
+    <div class="three">
+      <div class="card"><h2>Achats</h2>
+        <div class="btns"><button class="primary" data-cmd="/acheter">🛒 Acheter la part de la semaine</button>
+          <button id="a-pause">⏸️ Pause</button><button data-cmd="/questions">❓ Questions en attente</button></div>
+        <p class="muted help">Les achats automatiques ont lieu chaque semaine. Ces boutons servent à agir tout de suite.</p></div>
+
+      <div class="card"><h2>Analyse</h2>
+        <div class="btns"><button data-cmd="/radar maj">🔭 Nouvelle analyse Radar</button><button data-cmd="/graphique 90">📉 Graphique</button>
+          <button data-cmd="/test">🧪 Test sur 12 mois</button></div>
+        <div id="bt-res" class="muted help"></div></div>
+
+      <div class="card"><h2>Objectif d'épargne</h2>
+        <div id="goal-txt" class="muted">Aucun objectif.</div>
+        <div class="form"><input id="g-amt" type="number" min="0" step="50" placeholder="1000" aria-label="Montant"> €
+          <input id="g-date" type="month" aria-label="Date" style="width:auto"><button id="g-save">Enregistrer</button><button id="g-del">Supprimer</button></div></div>
+
+      <div class="card"><h2>Alertes de prix</h2>
+        <div id="al-list" class="muted">Aucune alerte.</div>
+        <div class="form"><input id="al-asset" placeholder="BTC" style="width:80px" aria-label="Crypto">
+          <select id="al-op" aria-label="Sens"><option value="<">passe sous</option><option value=">">passe au-dessus de</option></select>
+          <input id="al-price" type="number" min="0" step="any" placeholder="55000" aria-label="Prix"> €<button id="al-add">Créer</button></div>
+        <p class="muted help">Vérifiées toutes les 5 minutes. L'alerte arrive sur Telegram.</p></div>
+
+      <div class="card"><h2>Vérifications et sauvegardes</h2>
+        <div class="btns"><button data-cmd="/verifier">🔍 Comparer avec Revolut X</button><button data-cmd="/sauvegarde">🛟 Sauvegarder maintenant</button></div>
+        <div id="rc-txt" class="muted help"></div>
+        <p class="help"><a href="/api/download/backup.zip">⬇️ Télécharger une copie sans secrets</a></p></div>
+
+      <div class="card"><h2>Fiscalité</h2>
+        <div class="form" style="margin-top:0"><select id="tax-year" aria-label="Année"></select><button id="tax-sum">🧾 Résumé de l'année</button></div>
+        <p class="help"><a href="/api/download/operations.csv">⬇️ Toutes les opérations (CSV)</a><br><a id="tax-dl" href="#">⬇️ Plus-values de l'année (CSV)</a></p>
+        <p class="muted help">Méthode française (formulaire 2086). Aide au calcul, pas un conseil fiscal.</p></div>
+
+      <div class="card"><h2>Système</h2>
+        <div class="btns"><button data-cmd="/maj">⬆️ Mise à jour</button><button data-cmd="/version">📦 Version</button>
+          <button data-cmd="/retour">↩️ Version précédente</button><button data-cmd="/redemarrer">🔄 Redémarrer</button>
+          <button data-cmd="/mode">🔁 Simulation / réel</button></div></div>
+
+      <div class="card"><h2>Revolut X et GitHub</h2>
+        <div class="btns"><button data-cmd="/cle">🔑 Clé de signature</button></div>
+        <div class="form"><input id="k-api" class="wide" type="password" placeholder="Clé API Revolut X" autocomplete="off" aria-label="Clé API"><button id="k-save">Enregistrer la clé API</button></div>
+        <div class="form"><input id="r-repo" placeholder="FloFrad/micro-invest" style="width:190px" aria-label="Dépôt"><input id="r-tok" type="password" placeholder="jeton (si privé)" style="width:140px" autocomplete="off" aria-label="Jeton"><button id="r-save">Enregistrer le dépôt</button></div></div>
+
+      <div class="card"><h2>Commande libre</h2>
+        <div class="form" style="margin-top:0"><input id="free" class="wide" placeholder="/info SOL" aria-label="Commande" style="flex:1"><button id="free-go" class="primary">Envoyer</button></div>
+        <p class="muted help">Toutes les commandes Telegram fonctionnent ici. Essaie <code>/aide</code>.</p></div>
     </div>
   </section>
 
@@ -204,15 +275,24 @@ td.wrap,th.wrap{white-space:normal}
   </section>
 
   <!-- REGLAGES -->
-  <section class="panel" id="p-rules">
+  <section class="panel stack" id="p-rules">
     <div class="two">
+      <div class="card"><h2>Réglages</h2><div class="scroll"><table class="edit"><tbody id="t-set"></tbody></table></div>
+        <p class="muted" id="ver" style="margin:12px 0 0"></p></div>
       <div class="card"><h2>Règles actives</h2><ul class="steps" id="rules"></ul></div>
-      <div class="card"><h2>Réglages</h2><div class="scroll"><table><thead><tr><th>Réglage</th><th>Valeur</th><th>Changer sur Telegram</th></tr></thead>
-        <tbody id="t-set"></tbody></table></div><p class="muted" id="ver" style="margin:12px 0 0"></p></div>
+    </div>
+    <div class="two">
+      <div class="card"><h2>Cibles crypto</h2><div class="scroll"><table class="edit"><tbody id="t-tg"></tbody></table></div>
+        <div class="form"><input id="tg-new" placeholder="AVAX" style="width:90px" aria-label="Crypto"><input id="tg-neww" type="number" min="0" step="0.5" placeholder="5" aria-label="Poids"><button id="tg-add">Ajouter</button></div>
+        <p class="muted help">Poids relatifs : l'achat de la semaine va à la crypto la plus en retard sur sa part.</p></div>
+      <div class="card"><h2>Plan actions/ETF</h2><div class="scroll"><table class="edit"><tbody id="t-sg"></tbody></table></div>
+        <div class="form"><input id="sg-new" placeholder="NVDA" style="width:90px" aria-label="Action"><input id="sg-neww" type="number" min="0" step="5" placeholder="20" aria-label="Poids"><button id="sg-add">Ajouter</button></div>
+        <p class="muted help">Codes disponibles : voir l'onglet Radar (Actions &amp; ETF).</p></div>
     </div>
   </section>
 </div>
 <div id="toast" role="status"></div>
+<dialog id="dlg" aria-labelledby="dlg-t"><div class="dlg-head"><b id="dlg-t">Micro-invest</b><button class="icon-btn" id="dlg-x" aria-label="Fermer">✕</button></div><div class="dlg-body" id="dlg-b"></div></dialog>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -240,6 +320,28 @@ async function post(path, body){
   }catch(e){toast("Erreur : "+e);}
   load();
 }
+
+/* ---------- commandes (mêmes que Telegram) ---------- */
+const safe = h => esc(h).replace(/&lt;(\/?)(b|i|code|pre)&gt;/g, "<$1$2>");
+async function runCmd(payload, title){
+  const dlg=$("dlg"), body=$("dlg-b");
+  $("dlg-t").textContent = title || "Micro-invest";
+  body.innerHTML='<p class="muted">En cours…</p>'; if(!dlg.open){ try{ dlg.showModal(); }catch(e){ dlg.setAttribute("open",""); } }
+  try{
+    const r = await fetch("/api/cmd",{method:"POST",headers:{"Content-Type":"application/json","X-Requested-With":"microinvest"},body:JSON.stringify(payload)});
+    const j = await r.json();
+    if(j.error){ body.innerHTML='<p class="msg">❌ '+esc(j.error)+'</p>'; return; }
+    const msgs = j.messages||[];
+    body.innerHTML = msgs.length ? msgs.map(m=>`<div class="msg">${safe(m.html||"")}${m.image?`<img src="${m.image}" alt="Graphique">`:""}${m.file?`<div style="margin-top:6px"><a href="${m.file}" download="${esc(m.filename)}">⬇️ ${esc(m.filename)}</a></div>`:""}${
+      (m.buttons||[]).length?`<div class="btns">${m.buttons.flat().map(b=>`<button data-btn="${esc(b.data)}">${esc(b.label)}</button>`).join("")}</div>`:""}</div>`).join("")
+      : '<p class="msg">✅ Fait.</p>';
+    body.querySelectorAll("[data-btn]").forEach(b=>b.onclick=()=>runCmd({button:b.dataset.btn}, title));
+  }catch(e){ body.innerHTML='<p class="msg">❌ Erreur : '+esc(e)+'</p>'; }
+  load();
+}
+const cmd = (text, title) => runCmd({text}, title);
+$("dlg-x").onclick = () => $("dlg").close();
+document.addEventListener("click", ev => { const b = ev.target.closest("[data-cmd]"); if(b){ cmd(b.dataset.cmd, b.textContent.trim()); } });
 
 /* ---------- onglets ---------- */
 function showTab(t){
@@ -311,8 +413,12 @@ function radar(){
       <div class="kv"><span>30 j <b>${pct(r.r30*100)}</b></span><span>90 j <b>${pct(r.r90*100)}</b></span>
         <span>Depuis le plus haut 1 an <b>${pct(r.from_high*100)}</b></span><span>Volatilité <b>${Math.round(r.vol*100)} %/an</b></span>
         ${r.kind!=="crypto"?`<span>${esc(r.category)} · appli Revolut : <b>${esc(r.search)}</b></span>`:""}</div>
-      <p class="muted" style="margin:8px 0 0">${inPlan(r)?"Déjà dans ton plan.":"Ajouter : "+(r.kind==="crypto"?`<code>/cible ${esc(r.symbol)} 5</code>`:`<code>/cible_action ${esc(r.symbol.split(".")[0])} 20</code>`)+" sur Telegram."}</p>
+      <div class="btns" style="margin-top:10px">${inPlan(r)
+        ? `<button data-btn2="rm:${r.kind==="crypto"?"c":"s"}:${esc(r.symbol)}">➖ Retirer de mon plan</button>`
+        : `<button class="primary" data-btn2="add:${r.kind==="crypto"?"c":"s"}:${esc(r.symbol)}">➕ Ajouter à mon plan</button>`}
+        <button data-cmd="/info ${esc(r.symbol)}">🔎 Analyse complète</button></div>
     </div>`).join("");
+  document.querySelectorAll("[data-btn2]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); runCmd({button:b.dataset.btn2}, "Plan"); });
   document.querySelectorAll(".radar-row").forEach(el=>{ const t=()=>{ const d=$("d-"+el.dataset.i), on=!d.classList.contains("on"); d.classList.toggle("on",on); el.setAttribute("aria-expanded",on); };
     el.onclick=t; el.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); t(); } }; });
 }
@@ -366,8 +472,7 @@ function render(s){
     <td>${px(r.avg)}</td><td>${r.price?px(r.price):"—"}</td><td><b>${eur(r.value)}</b></td>
     <td class="${r.pnl_pct>=0?"pos":"neg"}">${pct(r.pnl_pct)}</td></tr>`).join("") + `<tr><td><b>Total</b></td><td></td><td></td><td></td><td><b>${eur(pf.value)}</b></td><td class="${pf.pnl>=0?"pos":"neg"}"><b>${pct(pf.pnl_pct)}</b></td></tr>`
     : `<tr><td colspan="6" class="empty">Aucune position pour l'instant : le premier achat arrive ${when(s.next_dca)}.</td></tr>`;
-  $("b-pause").textContent = s.paused ? "▶️ Reprendre" : "⏸️ Pause";
-  $("b-pause").onclick = () => post(s.paused ? "/api/resume" : "/api/pause");
+  for (const id of ["b-pause","a-pause"]) { $(id).textContent = s.paused ? "▶️ Reprendre" : "⏸️ Pause"; $(id).onclick = () => cmd(s.paused ? "/reprendre" : "/pause", "Achats"); }
 
   // plan actions
   const tg = s.etf.targets||{}, tsum = Object.values(tg).reduce((x,y)=>x+y,0)||1;
@@ -390,13 +495,44 @@ function render(s){
     ["💰","Prise de bénéfices", tp.enabled?`proposée à +${tp.gain_pct} % (vente de ${tp.sell_fraction_pct} %), jamais sous ton prix moyen`:"désactivée"],
     ["🛡","Jamais en négatif","aucun levier, jamais d'achat au-delà du solde disponible"],
   ].map(x=>`<li><span class="e">${x[0]}</span><span><b>${esc(x[1])}</b><span class="muted">${esc(x[2])}</span></span></li>`).join("");
-  const set = [["Budget crypto / mois", eur(c.budget.monthly_crypto_eur,0), "/regler budget_crypto 40"],
-    ["Budget actions / mois", eur(c.budget.monthly_etf_eur,0), "/regler budget_etf 15"],
-    ["Jour et heure d'achat", c.dca_day + " " + c.dca_hour + " h", "/regler jour_achat lundi"],
-    ["Plafond de perte", c.max_drawdown_pct + " %", "/regler plafond_perte 25"],
-    ["Cibles crypto", Object.entries(c.targets).map(([k,v])=>k+" "+v).join(" · "), "/cible SOL 12"],
-    ["Rappel actions", "le " + c.etf_day + " du mois", "/regler jour_etf 5"]];
-  $("t-set").innerHTML = set.map(x=>`<tr><td class="wrap">${esc(x[0])}</td><td style="white-space:normal"><b>${esc(x[1])}</b></td><td><code>${esc(x[2])}</code></td></tr>`).join("");
+  const JRS=["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
+  $("t-set").innerHTML = (s.settings||[]).map((x,i)=>{
+    let input;
+    if(x.kind==="bool") input=`<select id="st-${i}"><option value="oui"${x.value?" selected":""}>oui</option><option value="non"${!x.value?" selected":""}>non</option></select>`;
+    else if(x.kind==="day") input=`<select id="st-${i}">${JRS.map(j=>`<option${j===x.value?" selected":""}>${j}</option>`).join("")}</select>`;
+    else if(x.kind==="text") input=`<input id="st-${i}" value="${esc(x.value)}">`;
+    else input=`<input id="st-${i}" type="number" step="any" min="${x.min??""}" max="${x.max??""}" value="${x.value}">`;
+    return `<tr><td class="wrap"><b>${esc(x.desc)}</b><span class="muted" style="display:block">${esc(x.name)}</span></td><td>${input}</td><td><button data-set="${i}">OK</button></td></tr>`;
+  }).join("");
+  document.querySelectorAll("[data-set]").forEach(b=>b.onclick=()=>{ const x=s.settings[+b.dataset.set]; cmd("/regler "+x.name+" "+$("st-"+b.dataset.set).value, "Réglage"); });
+  $("t-tg").innerHTML = Object.entries(c.targets).map(([k,v],i)=>`<tr><td><b>${esc(k)}</b></td><td><input id="tg-${i}" type="number" min="0" step="0.5" value="${v}"></td>
+    <td><button data-tg="${esc(k)}" data-i="${i}">OK</button> <button data-tgdel="${esc(k)}" aria-label="Retirer ${esc(k)}">🗑</button></td></tr>`).join("");
+  document.querySelectorAll("[data-tg]").forEach(b=>b.onclick=()=>cmd("/cible "+b.dataset.tg+" "+$("tg-"+b.dataset.i).value,"Cibles crypto"));
+  document.querySelectorAll("[data-tgdel]").forEach(b=>b.onclick=()=>runCmd({button:"rm:c:"+b.dataset.tgdel},"Cibles crypto"));
+  $("t-sg").innerHTML = Object.entries(s.etf.targets||{}).map(([k,v],i)=>`<tr><td class="wrap"><b>${esc(((s.stock_labels||{})[k]||k).replace(/ \(cherche.*$/,""))}</b><span class="muted" style="display:block">${esc(k)}</span></td>
+    <td><input id="sg-${i}" type="number" min="0" step="5" value="${v}"></td><td><button data-sg="${esc(k)}" data-i="${i}">OK</button> <button data-sgdel="${esc(k)}" aria-label="Retirer ${esc(k)}">🗑</button></td></tr>`).join("");
+  document.querySelectorAll("[data-sg]").forEach(b=>b.onclick=()=>cmd("/cible_action "+b.dataset.sg.split(".")[0]+" "+$("sg-"+b.dataset.i).value,"Plan actions"));
+  document.querySelectorAll("[data-sgdel]").forEach(b=>b.onclick=()=>runCmd({button:"rm:s:"+b.dataset.sgdel},"Plan actions"));
+
+  // objectif
+  const g=s.goal;
+  $("goal-hero").style.display = g ? "" : "none";
+  if(g){ $("goal-lbl").textContent = "Objectif " + eur(g.amount,0) + (g.date ? " · " + g.date.slice(5)+"/"+g.date.slice(0,4) : "");
+    $("goal-val").textContent = Math.round(g.progress*100) + " %"; $("goal-bar").style.width = Math.round(g.progress*100)+"%";
+    $("goal-txt").innerHTML = `<b>${eur(g.current)}</b> sur ${eur(g.amount,0)} (${Math.round(g.progress*100)} %)` + (g.needed ? ` · il faudrait ≈ ${eur(g.needed)}/mois` : g.months ? " · en bonne voie" : "");
+  } else $("goal-txt").textContent = "Aucun objectif.";
+  // alertes
+  $("al-list").innerHTML = (s.alerts||[]).length ? s.alerts.map(a=>`<div class="row" style="justify-content:space-between;padding:4px 0"><span><b>${esc(a.asset)}</b> ${a.op==="<"?"sous":"au-dessus de"} ${px(a.price)}</span><button data-btn3="alrm:${a.id}" aria-label="Supprimer">🗑</button></div>`).join("") : "Aucune alerte.";
+  document.querySelectorAll("[data-btn3]").forEach(b=>b.onclick=()=>runCmd({button:b.dataset.btn3},"Alertes"));
+  // test, réconciliation, sauvegardes
+  const bt=s.backtest;
+  $("bt-res").innerHTML = bt ? `Dernier test (${dt(bt.ts)}) : intelligent <b>${pct(bt.smart.gain_pct*100)}</b> · simple <b>${pct(bt.simple.gain_pct*100)}</b><br><img src="/api/chart/backtest.png?t=${Math.round(bt.ts)}" alt="Test sur 12 mois" style="max-width:100%;margin-top:8px;border-radius:10px;border:1px solid var(--line)">` : "Aucun test pour l'instant.";
+  const rc=s.reconcile;
+  $("rc-txt").innerHTML = (rc ? (rc.ok ? "✅ Dernière vérification Revolut X : tout correspond (" + dt(rc.ts) + ")" : "⚠️ Écart détecté sur " + esc(rc.issues.join(", ")) + " (" + dt(rc.ts) + ")") : "Pas encore de vérification.")
+    + "<br>" + ((s.backups||[]).length ? "Sauvegardes sur le NAS : " + esc(s.backups.slice(0,3).join(", ")) : "Pas encore de sauvegarde.");
+  // fiscalité
+  const ys=$("tax-year"); if(!ys.options.length){ const y=new Date().getFullYear(); for(let k=y;k>=y-3;k--) ys.add(new Option(k,k)); }
+  $("tax-dl").href = "/api/download/plusvalues-" + ys.value + ".csv";
   $("ver").textContent = "Version : " + (s.version ? s.version.sha.slice(0,7) + " — " + s.version.message : "manuelle (zip)");
 
   chart(); radar();
@@ -407,7 +543,18 @@ async function load(){
   catch(e){ $("upd").textContent = "erreur de chargement : " + e; }
 }
 $("refresh").onclick = load;
-$("b-dca").onclick = () => { if(confirm("Lancer l'achat de la semaine maintenant ?")) post("/api/dca_now"); };
+$("g-save").onclick = () => { const a=$("g-amt").value; if(a>0) cmd("/objectif "+a+" "+($("g-date").value||""), "Objectif"); };
+$("g-del").onclick = () => cmd("/objectif 0", "Objectif");
+$("al-add").onclick = () => { const a=$("al-asset").value.trim(), p=$("al-price").value; if(a&&p>0) cmd("/alerte "+a+" "+$("al-op").value+" "+p, "Alerte"); };
+$("tax-year").onchange = () => { $("tax-dl").href = "/api/download/plusvalues-" + $("tax-year").value + ".csv"; };
+$("tax-sum").onclick = () => cmd("/export "+$("tax-year").value, "Fiscalité");
+$("k-save").onclick = () => { const k=$("k-api").value.trim(); if(k){ cmd("/cleapi "+k, "Clé API"); $("k-api").value=""; } };
+$("r-save").onclick = () => { const r=$("r-repo").value.trim(); if(r){ cmd("/depot "+r+" "+$("r-tok").value.trim(), "Dépôt"); $("r-tok").value=""; } };
+$("free-go").onclick = () => { const t=$("free").value.trim(); if(t) cmd(t, "Commande"); };
+$("free").onkeydown = e => { if(e.key==="Enter") $("free-go").click(); };
+$("tg-add").onclick = () => { const a=$("tg-new").value.trim(), w=$("tg-neww").value||5; if(a) cmd("/cible "+a+" "+w, "Cibles crypto"); };
+$("sg-add").onclick = () => { const a=$("sg-new").value.trim(), w=$("sg-neww").value||20; if(a) cmd("/cible_action "+a+" "+w, "Plan actions"); };
+$("b-dca").onclick = () => cmd("/acheter", "Achat");
 $("b-etf-decl").onclick = () => { const v=parseFloat($("i-etf").value); if(v>0) post("/api/etf",{amount:v}); };
 $("b-etfv").onclick = () => { const v=parseFloat($("i-etfv").value); if(v>=0) post("/api/etf_value",{value:v}); };
 let resizeT; window.addEventListener("resize", ()=>{ clearTimeout(resizeT); resizeT=setTimeout(()=>{ if(S) chart(); }, 150); });

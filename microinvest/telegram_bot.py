@@ -21,12 +21,22 @@ KEY_TO_CMD = {"📊 Statut": "/statut", "💼 Portefeuille": "/portefeuille", "�
 
 MENU = [
     [("🔭 Radar (conseils)", "m:/radar"), ("📈 Plan actions/ETF", "m:/actions")],
-    [("📜 Historique", "m:/historique"), ("📒 Journal", "m:/journal")],
+    [("🎯 Objectif", "m:/objectif"), ("🔔 Alertes prix", "m:/alertes")],
+    [("📉 Graphique", "m:/graphique"), ("📜 Historique", "m:/historique")],
+    [("🧰 Outils", "m:/outils"), ("🔧 Réglages", "m:/reglages")],
+    [("⚙️ Système", "m:/systeme"), ("❔ Aide", "m:/aide")],
+]
+OUTILS = [
     [("🧾 Déclarer achat actions", "m:/etf"), ("💶 Budget", "m:/budget")],
-    [("🔧 Réglages", "m:/reglages"), ("🔁 Mode simu/réel", "m:/mode")],
-    [("⬆️ Mise à jour", "m:/maj"), ("↩️ Version précédente", "m:/retour")],
-    [("🔄 Redémarrer", "m:/redemarrer"), ("🌐 Interface web", "m:/web")],
-    [("🔑 Clé Revolut X", "m:/cle"), ("❔ Aide", "m:/aide")],
+    [("🔍 Vérifier Revolut X", "m:/verifier"), ("🛟 Sauvegarde", "m:/sauvegarde")],
+    [("🧾 Export fiscal", "m:/export"), ("🧪 Test sur 12 mois", "m:/test")],
+    [("📒 Journal", "m:/journal"), ("⬅️ Menu", "m:/menu")],
+]
+SYSTEME = [
+    [("⬆️ Mise à jour", "m:/maj"), ("📦 Version", "m:/version")],
+    [("↩️ Version précédente", "m:/retour"), ("🔄 Redémarrer", "m:/redemarrer")],
+    [("🔁 Mode simu/réel", "m:/mode"), ("🔑 Clé Revolut X", "m:/cle")],
+    [("🌐 Interface web", "m:/web"), ("⬅️ Menu", "m:/menu")],
 ]
 
 BOT_COMMANDS = [
@@ -35,7 +45,10 @@ BOT_COMMANDS = [
     ("reprendre", "Relancer les achats"), ("historique", "Dernières opérations"), ("journal", "Journal des événements"),
     ("radar", "Conseils : cryptos et actions les mieux notées"), ("actions", "Plan actions/ETF"),
     ("info", "Détail d'un actif (ex. /info SOL)"), ("etf", "Déclarer un achat actions/ETF"), ("reglages", "Voir / modifier les réglages"), ("maj", "Mettre à jour l'outil"),
-    ("version", "Version installée"), ("mode", "Simulation ou réel"), ("aide", "Aide"),
+    ("version", "Version installée"), ("mode", "Simulation ou réel"), ("objectif", "Objectif d'épargne"),
+    ("alertes", "Alertes de prix"), ("graphique", "Graphique du portefeuille"), ("verifier", "Comparer avec Revolut X"),
+    ("sauvegarde", "Sauvegarde"), ("export", "Export fiscal (CSV)"), ("test", "Test de la stratégie sur 12 mois"),
+    ("aide", "Aide"),
 ]
 
 AIDE = """🤖 <b>Micro-invest — aide</b>
@@ -49,6 +62,10 @@ Les boutons en bas de l'écran font l'essentiel. « ⚙️ Menu » donne accès 
 <code>/cible SOL 12</code> — poids d'une crypto (0 = la retirer)
 <code>/cible_action NVDA 20</code> — poids d'une action/ETF (0 = la retirer)
 <code>/info SOL</code> — analyse détaillée d'un actif
+<code>/alerte BTC &lt; 55000</code> — alerte quand BTC passe sous 55 000 €
+<code>/objectif 1000 2027-06</code> — objectif d'épargne
+<code>/graphique 30</code> — graphique sur 30 jours
+<code>/export 2026</code> — opérations et plus-values de 2026
 <code>/radar crypto</code> · <code>/radar actions</code> · <code>/radar maj</code> — classements, nouvelle analyse
 <code>/cleapi TA_CLE</code> — clé API Revolut X (message effacé)
 <code>/depot proprietaire/depot</code> — dépôt GitHub des mises à jour
@@ -117,6 +134,37 @@ def api_call(token, method, params=None, timeout=20):
     return res.get("result")
 
 
+def api_upload(token, method, fields, file_field, filename, content, mime, timeout=60):
+    """Envoi d'un fichier (sendDocument / sendPhoto) en multipart/form-data, sans dépendance."""
+    import uuid
+    boundary = "----microinvest" + uuid.uuid4().hex
+    parts = []
+    for k, v in fields.items():
+        if v is None:
+            continue
+        if isinstance(v, (dict, list)):
+            v = json.dumps(v)
+        parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n" % (boundary, k, v)).encode())
+    parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n" % (
+        boundary, file_field, filename, mime)).encode() + content + b"\r\n")
+    parts.append(("--%s--\r\n" % boundary).encode())
+    req = urllib.request.Request("https://api.telegram.org/bot%s/%s" % (token, method), data=b"".join(parts),
+                                 headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            res = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            res = json.loads(e.read().decode())
+        except ValueError:
+            raise TelegramError("HTTP %s" % e.code)
+    except urllib.error.URLError as e:
+        raise TelegramError("Connexion à Telegram impossible : %s" % e.reason)
+    if not res.get("ok"):
+        raise TelegramError(res.get("description", "erreur inconnue"))
+    return res.get("result")
+
+
 def _inline(buttons):
     return {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in buttons]}
 
@@ -140,11 +188,12 @@ def local_ip():
 
 
 class TelegramBot:
-    def __init__(self, token, chat_id, engine=None, api=api_call, updater=None, restart=None, base_dir=None):
+    def __init__(self, token, chat_id, engine=None, api=api_call, updater=None, restart=None, base_dir=None, upload=None):
         self.token = token
         self.chat_id = str(chat_id)
         self.engine = engine
         self.api = api
+        self.upload = upload or api_upload
         self.updater = updater
         self.restart = restart or (lambda: None)
         self.base_dir = base_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -176,6 +225,25 @@ class TelegramBot:
                                       "resize_keyboard": True, "is_persistent": True}
         res = self._send_html("sendMessage", params)
         return res.get("message_id") if isinstance(res, dict) else None
+
+    def _upload(self, method, field, filename, content, mime, caption="", buttons=None):
+        fields = {"chat_id": self.chat_id, "caption": caption[:1000], "parse_mode": "HTML"}
+        if buttons:
+            fields["reply_markup"] = _inline(buttons)
+        try:
+            return self.upload(self.token, method, fields, field, filename, content, mime)
+        except TelegramError as e:
+            if "parse" not in str(e).lower() and "entit" not in str(e).lower():
+                raise
+            fields.pop("parse_mode")
+            fields["caption"] = F.strip_tags(fields["caption"])
+            return self.upload(self.token, method, fields, field, filename, content, mime)
+
+    def send_photo(self, png, caption="", buttons=None):
+        return self._upload("sendPhoto", "photo", "graphique.png", png, "image/png", caption, buttons)
+
+    def send_document(self, filename, content, caption="", mime="application/octet-stream"):
+        return self._upload("sendDocument", "document", filename, content, mime, caption)
 
     def edit(self, msg_id, text):
         self._send_html("editMessageText", {"chat_id": self.chat_id, "message_id": msg_id, "text": text[:4000]})
@@ -271,6 +339,30 @@ class TelegramBot:
             return {"text": AIDE, "keyboard": True}
         if cmd == "/menu":
             return ("⚙️ <b>Menu</b> — que veux-tu faire ?", MENU)
+        if cmd == "/outils":
+            return ("🧰 <b>Outils</b>", OUTILS)
+        if cmd in ("/systeme", "/système"):
+            return ("⚙️ <b>Système</b>", SYSTEME)
+        if cmd in ("/verifier", "/vérifier"):
+            try:
+                text, buttons = e.reconcile()
+            except Exception as ex:
+                return "❌ Vérification impossible : %s" % F.esc(ex)
+            return (text, buttons) if buttons else text
+        if cmd == "/sauvegarde":
+            return self.backup_cmd()
+        if cmd == "/export":
+            return self.export_cmd(args)
+        if cmd in ("/test", "/test12"):
+            return self.test_cmd()
+        if cmd == "/graphique":
+            return self.chart_cmd(args)
+        if cmd == "/objectif":
+            return self.goal_cmd(args)
+        if cmd == "/alerte":
+            return self.alert_cmd(args)
+        if cmd == "/alertes":
+            return self.alerts_list()
         if cmd in ("/statut", "/status"):
             return e.status_text()
         if cmd in ("/portefeuille", "/portfolio"):
@@ -416,6 +508,21 @@ class TelegramBot:
             return self.set_target([sym, w]) if k == "c" else self.set_stock_target([sym, w])
         if data == "cmd:radar_run":
             return self.radar_cmd(["maj"])
+        if data == "cmd:reconcile_fix":
+            return e.reconcile_fix()
+        if data.startswith("rm:"):
+            _, k, sym = data.split(":", 2)
+            return ("➖ <b>Retirer %s de ton plan ?</b>\nL'outil n'en achètera plus. Ce que tu détiens déjà reste en place." % F.esc(sym),
+                    [[("✅ Retirer", "rmok:%s:%s" % (k, sym)), ("❌ Garder", "cmd:noop")]])
+        if data.startswith("rmok:"):
+            _, k, sym = data.split(":", 2)
+            return self.set_target([sym, "0"]) if k == "c" else self.set_stock_target([sym.split(".")[0], "0"])
+        if data.startswith("alrm:"):
+            e.remove_price_alert(int(data.split(":")[1]))
+            return self.alerts_list()
+        if data.startswith("cmd:alert_re:"):
+            _, _, asset, op, price = data.split(":", 4)
+            return self.alert_cmd([asset, "<" if op == "lt" else ">", price])
         if data == "cmd:ask_live":
             return self.on_command("/mode reel")
         if data == "cmd:ask_paper":
@@ -603,6 +710,127 @@ class TelegramBot:
         e.log("info", "Plan actions modifié : %s" % targets)
         return "✅ Plan actions : " + " · ".join("%s %g" % (k.split(".")[0], v) for k, v in targets.items())
 
+    # ------------------------------------------------------------- outils
+    sync = False  # le web exécute les tâches longues tout de suite (pas en arrière-plan)
+
+    def backup_cmd(self):
+        from . import backup
+        path = self.engine.do_backup()
+        data = backup.build_zip(self.base_dir, with_secrets=False)
+        self.send_document("microinvest-sauvegarde-%s.zip" % time.strftime("%Y-%m-%d", time.localtime(self.engine.clock())), data,
+                           "🛟 Copie de tes données <b>sans aucun secret</b> (clé API, jeton, mot de passe retirés).", "application/zip")
+        return ("🛟 <b>Sauvegarde faite</b>\n• Complète (avec secrets) sur le NAS : <code>%s</code>\n"
+                "• Copie sans secrets : ci-dessus.\n<i>Une sauvegarde est aussi faite chaque nuit (14 gardées).</i>" % (
+                    F.esc(os.path.relpath(path, self.base_dir)) if path else "échec, voir le journal"))
+
+    def export_cmd(self, args):
+        from . import tax
+        e = self.engine
+        year = int(args[0]) if args and args[0].isdigit() else time.localtime(e.clock()).tm_year
+        self.send_document("operations-%s.csv" % e.mode, tax.operations_csv(e.store),
+                           "🧾 Toutes les opérations (ouvre avec Excel ou Numbers).", "text/csv")
+        sm = tax.year_summary(e.store, year)
+        self.send_document("plus-values-%d.csv" % year, tax.plus_values_csv(e.store, year),
+                           "🧾 Plus-values crypto %d (méthode française, formulaire 2086)." % year, "text/csv")
+        if not sm["cessions"]:
+            verdict = "Aucune vente de crypto contre euros en %d : <b>rien à déclarer en plus-values</b>." % year
+        elif sm["exempt"]:
+            verdict = "Total des ventes %s ≤ 305 € : plus-values <b>exonérées</b>." % F.eur(sm["total_cessions"])
+        else:
+            verdict = "Plus-value nette %s → impôt estimé ≈ <b>%s</b> (flat tax 30 %%)." % (F.signed_eur(sm["pv"]), F.eur(sm["tax_estimate"]))
+        return ("🧾 <b>Export fiscal %d</b>%s\n%d vente%s · total %s · plus-value %s\n%s\n\n"
+                "📝 <i>Pense aussi au formulaire 3916-bis (compte crypto à l'étranger : Revolut X). Seules les cryptos de "
+                "l'outil sont comptées. Aide au calcul, pas un conseil fiscal.</i>" % (
+                    year, " · 🧪 simulation" if e.mode == "paper" else "", len(sm["cessions"]), "s" if len(sm["cessions"]) > 1 else "",
+                    F.eur(sm["total_cessions"]), F.signed_eur(sm["pv"]), verdict))
+
+    def test_cmd(self):
+        def work():
+            try:
+                res, image = self.engine.run_backtest()
+                self.send_photo(image, self.engine.backtest_text(res))
+            except Exception as ex:
+                log.exception("Test 12 mois")
+                self.notify("❌ <b>Test impossible</b> : %s" % F.esc(ex))
+        if self.sync:
+            work()
+            return None
+        threading.Thread(target=work, name="backtest", daemon=True).start()
+        return "🧪 Test lancé sur les 12 derniers mois de prix réels… résultat dans 15 à 30 secondes."
+
+    def chart_cmd(self, args):
+        e = self.engine
+        days = int(args[0]) if args and args[0].isdigit() else 90
+        image = e.portfolio_chart_png(days)
+        if not image:
+            return "📉 Pas encore assez d'historique : la courbe apparaît quelques heures après le premier achat."
+        pf = e.portfolio()
+        self.send_photo(image, "📉 <b>Portefeuille crypto</b> — %s (%s)\n<i>Bleu : valeur · gris pointillé : montant investi</i>" % (
+            F.eur(pf["value"]), F.pct(pf["pnl_pct"])),
+            [[("30 jours", "m:/graphique 30"), ("90 jours", "m:/graphique 90"), ("Tout", "m:/graphique 0")]])
+        return None
+
+    def goal_cmd(self, args):
+        e = self.engine
+        if not args:
+            return e.goal_text()
+        try:
+            amount = float(args[0].replace(",", ".").replace("€", ""))
+        except ValueError:
+            return "Usage : <code>/objectif 1000 2027-06</code> (montant, puis date AAAA-MM, facultative)"
+        date = ""
+        if len(args) > 1:
+            d = args[1].replace("/", "-")
+            parts = d.split("-")
+            if len(parts) == 2 and len(parts[0]) == 2:
+                d = "%s-%s" % (parts[1], parts[0])  # 06-2027 → 2027-06
+            date = d
+        try:
+            e.set_goal(amount, date)
+        except config_mod.ConfigError as ex:
+            return "❌ %s" % F.esc(ex)
+        e.log("info", "Objectif : %s %s" % (amount, date))
+        return e.goal_text() if amount else "🎯 Objectif supprimé."
+
+    def alert_cmd(self, args):
+        e = self.engine
+        if not args:
+            return self.alerts_list()
+        asset = args[0].upper()
+        rest = [a for a in args[1:]]
+        op = None
+        if rest and rest[0] in ("<", ">", "&lt;", "&gt;"):
+            op = "<" if rest[0] in ("<", "&lt;") else ">"
+            rest = rest[1:]
+        try:
+            price = float(rest[0].replace(",", ".").replace("€", "")) if rest else None
+        except ValueError:
+            price = None
+        if not price or price <= 0:
+            return "Usage : <code>/alerte BTC &lt; 55000</code> ou <code>/alerte ETH &gt; 4000</code>"
+        try:
+            last = e.market.tickers([asset]).get(asset, {}).get("last")
+            if op is None:
+                op = "<" if last and price < last else ">"
+            e.add_price_alert(asset, op, price)
+        except Exception as ex:
+            return "❌ Alerte impossible : %s" % F.esc(ex)
+        e.log("info", "Alerte prix ajoutée : %s %s %s" % (asset, op, price))
+        return "🔔 <b>Alerte créée</b> : je te préviens quand %s passe %s %s%s." % (
+            F.esc(asset), "sous" if op == "<" else "au-dessus de", F.price(price),
+            (" (actuellement %s)" % F.price(last)) if last else "")
+
+    def alerts_list(self):
+        al = self.engine.price_alerts()
+        if not al:
+            return "🔔 <b>Aucune alerte de prix.</b>\nExemple : <code>/alerte BTC &lt; 55000</code> (vérifié toutes les 5 minutes)."
+        lines = ["🔔 <b>Alertes de prix</b> (vérifiées toutes les 5 min)"]
+        lines += ["#%d · <b>%s</b> %s %s" % (a["id"], F.esc(a["asset"]), "sous" if a["op"] == "<" else "au-dessus de",
+                                             F.price(a["price"])) for a in al]
+        lines.append("<i>Ajouter : /alerte ETH &gt; 4000</i>")
+        buttons = [[("🗑 #%d %s" % (a["id"], a["asset"]), "alrm:%d" % a["id"]) for a in al[i:i + 3]] for i in range(0, len(al), 3)]
+        return ("\n".join(lines), buttons)
+
     # --------------------------------------------------------- clés et dépôt
     def key_info(self):
         keys = os.path.join(self.base_dir, "keys")
@@ -729,3 +957,79 @@ def _num(args):
         return float(args[0].replace(",", ".").replace("€", ""))
     except ValueError:
         return None
+
+
+class WebCommands(TelegramBot):
+    """Exécute les mêmes commandes que le bot, pour l'interface web.
+
+    Les réponses sont collectées (texte, boutons, images, fichiers) au lieu d'être envoyées sur Telegram.
+    Ce qui arrive plus tard depuis une tâche en arrière-plan part sur Telegram (s'il est configuré)."""
+
+    sync = True
+
+    def __init__(self, engine, updater=None, restart=None, base_dir=None):
+        TelegramBot.__init__(self, "", "web", engine, api=lambda *a, **k: None, updater=updater, restart=restart,
+                             base_dir=base_dir)
+        self._local = threading.local()
+        self.files = {}
+        self._files_lock = threading.Lock()
+
+    def _out(self):
+        return getattr(self._local, "out", None)
+
+    def _forward(self):
+        n = self.engine.notifier
+        return n if n is not self else None
+
+    def notify(self, text, buttons=None, keyboard=False):
+        out = self._out()
+        if out is None:
+            fwd = self._forward()
+            return fwd.notify(text, buttons) if fwd else None
+        out.append({"html": text, "buttons": [[{"label": t, "data": d} for t, d in row] for row in (buttons or [])]})
+        return None
+
+    def edit(self, msg_id, text):
+        return None
+
+    def _keep(self, filename, content, mime):
+        import uuid
+        fid = uuid.uuid4().hex[:16]
+        with self._files_lock:
+            self.files[fid] = (filename, content, mime, time.time())
+            for k in sorted(self.files, key=lambda k: self.files[k][3])[:-20]:
+                self.files.pop(k, None)
+        return fid
+
+    def send_photo(self, png, caption="", buttons=None):
+        out = self._out()
+        if out is None:
+            fwd = self._forward()
+            return fwd.send_photo(png, caption, buttons) if fwd else None
+        fid = self._keep("graphique.png", png, "image/png")
+        out.append({"html": caption, "image": "/api/file/%s" % fid,
+                    "buttons": [[{"label": t, "data": d} for t, d in row] for row in (buttons or [])]})
+
+    def send_document(self, filename, content, caption="", mime="application/octet-stream"):
+        out = self._out()
+        if out is None:
+            fwd = self._forward()
+            return fwd.send_document(filename, content, caption, mime) if fwd else None
+        fid = self._keep(filename, content, mime)
+        out.append({"html": caption, "file": "/api/file/%s" % fid, "filename": filename, "buttons": []})
+
+    def run(self, text=None, button=None):
+        self._local.out = []
+        try:
+            if button:
+                reply = self.on_button(button)
+            else:
+                text = KEY_TO_CMD.get(text.strip(), text.strip())
+                if not text.startswith("/"):
+                    text = "/" + text
+                reply = self.on_command(text)
+            self.send(reply)
+            return self._local.out
+        finally:
+            self._local.out = None
+

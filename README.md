@@ -6,6 +6,9 @@ Outil autonome de micro-investissement : crypto 100 % automatique via **Revolut 
 - Démarre en **simulation** (vrais prix, faux argent).
 - Garde-fous : jamais de découvert, budget mensuel plafonné, jamais de vente à perte, gel des achats à -25 %.
 - Radar quotidien : note sur 100 de toutes les cryptos Revolut X et d'une trentaine d'actions/ETF, ajout au plan en un clic.
+- Veille automatique : message du matin, alerte solde bas, sauvegarde de nuit, vérification avec Revolut X.
+- Outils : objectif d'épargne, alertes de prix, graphiques, test sur 12 mois, export fiscal (méthode française).
+- Interface web complète (à la maison) : tout se pilote aussi sans Telegram.
 - Mises à jour depuis Telegram : tests automatiques avant installation, retour automatique à l'ancienne version si la nouvelle plante.
 
 👉 Mise en place pas à pas : **[GUIDE.md](GUIDE.md)**

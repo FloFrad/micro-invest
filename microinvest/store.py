@@ -29,6 +29,10 @@ class Store:
         self.db.row_factory = sqlite3.Row
         with self.lock:
             self.db.executescript(SCHEMA)
+            try:  # migration : valeur globale du portefeuille au moment d'une vente (calcul fiscal)
+                self.db.execute("ALTER TABLE trades ADD COLUMN portfolio_value REAL")
+            except sqlite3.OperationalError:
+                pass
             self.db.commit()
 
     def q(self, sql, args=()):
@@ -50,11 +54,15 @@ class Store:
         self.x("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", (k, json.dumps(v)))
 
     # --- opérations ---
-    def add_trade(self, asset, side, qty, eur, price, reason, order_id="", kind="crypto"):
+    def add_trade(self, asset, side, qty, eur, price, reason, order_id="", kind="crypto", portfolio_value=None):
         return self.x(
-            "INSERT INTO trades (ts, asset, side, qty, eur, price, reason, order_id, kind) VALUES (?,?,?,?,?,?,?,?,?)",
-            (self.clock(), asset, side, qty, eur, price, reason, order_id, kind),
+            "INSERT INTO trades (ts, asset, side, qty, eur, price, reason, order_id, kind, portfolio_value) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (self.clock(), asset, side, qty, eur, price, reason, order_id, kind, portfolio_value),
         )
+
+    def all_trades(self):
+        return self.q("SELECT * FROM trades ORDER BY id")
 
     def trades(self, limit=50, kind=None):
         if kind:

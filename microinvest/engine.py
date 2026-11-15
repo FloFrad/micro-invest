@@ -53,6 +53,12 @@ class NullNotifier:
         log.info("[notification] %s", text.replace("\n", " | "))
         return None
 
+    def send_photo(self, png, caption="", buttons=None):
+        log.info("[image] %s", caption.replace("\n", " | "))
+
+    def send_document(self, filename, content, caption="", mime=""):
+        log.info("[fichier] %s (%d octets)", filename, len(content))
+
     def edit(self, msg_id, text):
         pass
 
@@ -144,6 +150,22 @@ class Engine:
             return self.notifier.notify(text, buttons)
         except Exception as e:  # une panne Telegram ne doit jamais bloquer le moteur
             log.warning("Notification impossible : %s", e)
+            return None
+
+    def send_photo(self, png, caption, buttons=None):
+        """Envoie une image ; si ça échoue, envoie au moins le texte."""
+        try:
+            return self.notifier.send_photo(png, caption, buttons)
+        except Exception as e:
+            log.warning("Image non envoyée : %s", e)
+            return self.notify(caption, buttons)
+
+    def send_document(self, filename, content, caption="", mime="application/octet-stream"):
+        try:
+            return self.notifier.send_document(filename, content, caption, mime)
+        except Exception as e:
+            log.warning("Fichier non envoyé : %s", e)
+            self.notify("⚠️ Envoi du fichier %s impossible : %s" % (F.esc(filename), F.esc(e)))
             return None
 
     @property
@@ -321,7 +343,11 @@ class Engine:
             if q <= 0:
                 self.notify("⚠️ <b>Vente %s non exécutée</b> (statut : %s)" % (F.esc(asset), F.esc(o["status"])))
                 return None
-            self.store.add_trade(asset, "sell", q, received, o["price"], reason, o["id"])
+            try:
+                global_value = sum(r["value"] for r in self.portfolio()["rows"])  # valeur globale avant la cession
+            except Exception:
+                global_value = None
+            self.store.add_trade(asset, "sell", q, received, o["price"], reason, o["id"], portfolio_value=global_value)
             gain = received - pos["avg"] * q
             tag = " · 🧪 simulation" if self.mode == "paper" else ""
             msg = "💰 <b>Vente effectuée</b>%s\n%s %s → <b>%s</b>\nGain encaissé ≈ <b>%s</b>\n💡 %s" % (
@@ -410,7 +436,7 @@ class Engine:
         if dip_cands:
             asset = max(dip_cands, key=lambda a: dips[a])
             amount = base * d["dip_multiplier"]
-            reason = "DCA hebdo renforcé : %s est %.1f %% sous sa moyenne 30 j" % (asset, dips[asset])
+            reason = "DCA hebdo renforcé : %s est %s %% sous sa moyenne 30 j" % (asset, F.num(dips[asset], 1))
         else:
             asset = max(deficits, key=lambda a: deficits[a])
             amount = base
@@ -511,7 +537,7 @@ class Engine:
                 continue
             last[a] = self.clock()
             self.store.set("opp_last", last)
-            self.request_approval("buy", {"asset": a, "amount": amount, "reason": "opportunité : -%.1f %% vs moyenne 30 j" % dip},
+            self.request_approval("buy", {"asset": a, "amount": amount, "reason": "opportunité : −%s %% vs moyenne 30 j" % F.num(dip, 1)},
                                   "📉 <b>Forte baisse sur %s</b>\n%s sous sa moyenne des 30 derniers jours.\n"
                                   "Acheter <b>%s</b> en plus ?\n<i>Pris sur le budget du mois (reste %s).</i>" % (
                                       F.esc(a), F.pct(-dip), eur(amount), eur(bs["remaining"])))
@@ -632,6 +658,7 @@ class Engine:
                 self.check_drawdown()
                 self.check_take_profit()
                 self.check_opportunity()
+                self.check_low_balance()
             except BrokerError as e:
                 self.log("warn", "Surveillance horaire : %s" % e)
 
@@ -666,9 +693,41 @@ class Engine:
                         self.notify("⏰ <b>Rappel</b> : les achats actions/ETF du mois attendent toujours.\n"
                                     "Bouton « ❓ Questions » pour les retrouver.")
 
+        day = time.strftime("%Y-%m-%d", t)
+        # Message du matin (preuve que l'outil tourne)
+        dl = self.cfg["daily"]
+        if dl["enabled"] and t.tm_hour >= dl["hour"] and self.store.get("daily_day") != day:
+            self.store.set("daily_day", day)
+            try:
+                self.notify(self.daily_text())
+            except BrokerError as e:
+                self.notify("☀️ <b>Bonjour</b> — Micro-invest tourne ✅\n⚠️ Prix indisponibles : <i>%s</i>" % F.esc(e))
+
+        # Sauvegarde de nuit
+        bk = self.cfg["backup"]
+        if bk["enabled"] and t.tm_hour >= bk["hour"] and self.store.get("backup_day") != day:
+            self.store.set("backup_day", day)
+            self.do_backup()
+
+        # Réconciliation quotidienne avec Revolut X
+        rc = self.cfg["reconcile"]
+        if rc["enabled"] and t.tm_hour >= rc["hour"] and self.store.get("reconcile_day") != day:
+            self.store.set("reconcile_day", day)
+            try:
+                self.reconcile(notify_only_if_problem=True)
+            except BrokerError as e:
+                self.log("warn", "Réconciliation impossible : %s" % e)
+
+        # Alertes de prix (toutes les 5 minutes)
+        if self.store.get("price_alerts") and now - self.store.get("alerts_checked", 0) >= 300:
+            self.store.set("alerts_checked", now)
+            try:
+                self.check_price_alerts()
+            except BrokerError as e:
+                log.info("Alertes de prix : %s", e)
+
         # Radar quotidien (en arrière-plan : 2 à 4 min)
         r = self.cfg["radar"]
-        day = time.strftime("%Y-%m-%d", t)
         if r["enabled"] and t.tm_hour >= r["hour"] and self.store.get("radar_day") != day:
             self.store.set("radar_day", day)
             self.get_radar().run_async(notify=False)
@@ -677,10 +736,263 @@ class Engine:
         w = self.cfg["weekly_report"]
         if t.tm_wday == w["weekday"] and t.tm_hour >= w["hour"] and self.store.get("report_week") != week:
             self.store.set("report_week", week)
-            self.notify(self.weekly_report_text())
+            report = self.weekly_report_text()
+            png = self.portfolio_chart_png(90)
+            if png and len(F.strip_tags(report)) <= 1000:
+                self.send_photo(png, report)
+            else:
+                if png:
+                    self.send_photo(png, "📉 <b>Ton portefeuille sur 90 jours</b>")
+                self.notify(report)
             rd = self.get_radar().latest()
             if r["enabled"] and rd:
                 self.notify(self.get_radar().summary_text(rd), self.get_radar().summary_buttons(rd))
+
+    # ------------------------------------------------------ fiabilité (1-3)
+    def daily_text(self):
+        now = self.clock()
+        t = time.localtime(now)
+        pf = self.portfolio()
+        lines = ["☀️ <b>Bonjour</b> — Micro-invest tourne ✅%s" % (" · 🧪 simulation" if self.mode == "paper" else "")]
+        if pf["cost"] > 0:
+            lines.append("💼 Crypto : <b>%s</b> (%s)" % (eur(pf["value"]), pct(pf["pnl_pct"])))
+        today = []
+        nd = self.next_dca_ts()
+        if time.strftime("%Y-%m-%d", time.localtime(nd)) == time.strftime("%Y-%m-%d", t):
+            today.append("🛒 achat crypto à %d h (≈ %s)" % (time.localtime(nd).tm_hour, eur(self.budget_status()["weekly_base"])))
+        ne = self.next_etf_ts()
+        if time.strftime("%Y-%m-%d", time.localtime(ne)) == time.strftime("%Y-%m-%d", t) and self.cfg["budget"]["monthly_etf_eur"] > 0:
+            today.append("📈 rappel actions/ETF à %d h" % time.localtime(ne).tm_hour)
+        lines.append("🗓 Aujourd'hui : " + (" · ".join(today) if today else "rien de prévu"))
+        g = self.goal_status()
+        if g:
+            lines.append("🎯 Objectif : %s %.0f %%" % (F.bar(g["progress"]), g["progress"] * 100))
+        n = len(self.store.pending_approvals())
+        if n:
+            lines.append("❓ <b>%d question%s en attente</b> → « ❓ Questions »" % (n, "s" if n > 1 else ""))
+        if self.flag("paused"):
+            lines.append("⏸️ Achats en pause")
+        return "\n".join(lines)
+
+    def check_low_balance(self):
+        bs = self.budget_status()
+        weeks = self.cfg["safety"]["low_balance_weeks"]
+        need = bs["weekly_base"] * weeks
+        if need <= 0 or bs["remaining"] <= 0 or self.flag("paused"):
+            return
+        try:
+            avail = self.broker.balances().get(self.cfg["quote"], 0.0) - self.cfg["budget"]["keep_reserve_eur"]
+        except BrokerError:
+            return
+        if avail >= need or self.clock() - self.store.get("low_balance_last", 0) < 3 * 86400:
+            return
+        self.store.set("low_balance_last", self.clock())
+        weeks_left = max(0, int(avail // bs["weekly_base"])) if bs["weekly_base"] else 0
+        self.log("warn", "Solde bas : %s" % eur(avail))
+        self.notify("🏦 <b>Solde bas sur Revolut X</b>%s\n%s disponibles = <b>%d semaine%s</b> d'achats.\n"
+                    "➡️ <b>Que faire</b> : dépose au moins %s sur Revolut X (exchange.revolut.com → Déposer)." % (
+                        " (simulation)" if self.mode == "paper" else "", eur(max(avail, 0)), weeks_left,
+                        "s" if weeks_left > 1 else "", eur(max(bs["monthly"], need))))
+
+    def do_backup(self):
+        from . import backup
+        try:
+            path, size = backup.save_local(self.base_dir, self.clock())
+            self.log("info", "Sauvegarde : %s (%d Ko)" % (os.path.basename(path), size // 1024))
+            return path
+        except Exception as e:
+            self.log("error", "Sauvegarde impossible : %s" % e)
+            self.notify("⚠️ <b>Sauvegarde de nuit impossible</b>\n<i>%s</i>" % F.esc(e))
+            return None
+
+    def reconcile_data(self):
+        """Compare les quantités suivies par l'outil avec les avoirs réels sur Revolut X."""
+        pos = self.store.positions()
+        hold = self.broker.holdings()
+        rows = []
+        for a, p in sorted(pos.items()):
+            if p["qty"] <= 1e-12:
+                continue
+            ex = hold.get(a, 0.0)
+            missing = p["qty"] - ex
+            ok = missing <= max(p["qty"] * 0.005, 1e-10)
+            rows.append({"asset": a, "bot": p["qty"], "exchange": ex, "missing": max(0.0, missing), "ok": ok,
+                         "avg": p["avg"], "extra": max(0.0, ex - p["qty"])})
+        return rows, hold.get(self.cfg["quote"], 0.0)
+
+    def reconcile(self, notify_only_if_problem=False):
+        rows, eur_bal = self.reconcile_data()
+        bad = [r for r in rows if not r["ok"]]
+        self.store.set("reconcile_last", {"ts": self.clock(), "ok": not bad, "issues": [r["asset"] for r in bad]})
+        if bad:
+            self.log("warn", "Écart avec Revolut X : %s" % ", ".join(r["asset"] for r in bad))
+        if notify_only_if_problem and not bad:
+            return None
+        table = [["Actif", "Outil", "Revolut X", ""]] + [
+            [r["asset"], F.num(r["bot"], 6).replace(F.NBSP, " "), F.num(r["exchange"], 6).replace(F.NBSP, " "), "OK" if r["ok"] else "ÉCART"]
+            for r in rows]
+        if bad:
+            text = ("🔍 <b>Écart avec Revolut X</b>\nL'outil pense détenir plus que ce qu'il y a réellement sur Revolut X "
+                    "(vente ou retrait manuel ?).\n%s\n➡️ <b>Que faire</b> : si c'est toi qui as vendu ou retiré, aligne l'outil "
+                    "sur Revolut X. Sinon, vérifie ton compte Revolut X." % F.pre(F.table(table)))
+            buttons = [[("✔️ Aligner l'outil sur Revolut X", "cmd:reconcile_fix")]]
+        else:
+            text = "🔍 <b>Revolut X : tout correspond</b> ✅\n%s\nSolde EUR : %s" % (
+                F.pre(F.table(table)) if rows else "(aucune position suivie)", eur(eur_bal))
+            buttons = None
+        if notify_only_if_problem:
+            self.notify(text, buttons)
+        return text, buttons
+
+    def reconcile_fix(self):
+        rows, _ = self.reconcile_data()
+        fixed = []
+        for r in rows:
+            if not r["ok"]:
+                self.store.add_trade(r["asset"], "sell", r["missing"], r["avg"] * r["missing"], r["avg"],
+                                     "ajustement (écart Revolut X)", "adjust")
+                fixed.append("%s −%s" % (r["asset"], F.num(r["missing"], 8)))
+        if not fixed:
+            return "Rien à aligner : tout correspond déjà."
+        self.log("info", "Positions alignées sur Revolut X : %s" % ", ".join(fixed))
+        return "✔️ <b>Outil aligné sur Revolut X</b> : %s" % F.esc(", ".join(fixed))
+
+    # ----------------------------------------------------- alertes de prix (6)
+    def price_alerts(self):
+        return list(self.store.get("price_alerts", []))
+
+    def add_price_alert(self, asset, op, price):
+        asset = asset.upper()
+        self.market.pair_info(asset)  # lève une erreur si la crypto n'existe pas sur Revolut X
+        alerts = self.price_alerts()
+        if len(alerts) >= 20:
+            raise ValueError("20 alertes maximum")
+        aid = max([a["id"] for a in alerts] + [0]) + 1
+        alerts.append({"id": aid, "asset": asset, "op": op, "price": float(price), "ts": self.clock()})
+        self.store.set("price_alerts", alerts)
+        return aid
+
+    def remove_price_alert(self, aid):
+        alerts = [a for a in self.price_alerts() if a["id"] != aid]
+        self.store.set("price_alerts", alerts)
+
+    def check_price_alerts(self):
+        alerts = self.price_alerts()
+        if not alerts:
+            return
+        prices = self.market.tickers(sorted(set(a["asset"] for a in alerts)))
+        keep = []
+        for a in alerts:
+            last = prices.get(a["asset"], {}).get("last")
+            hit = last and ((a["op"] == "<" and last <= a["price"]) or (a["op"] == ">" and last >= a["price"]))
+            if not hit:
+                keep.append(a)
+                continue
+            self.log("info", "Alerte prix : %s %s %s" % (a["asset"], a["op"], a["price"]))
+            self.notify("🔔 <b>Alerte prix</b> : %s est passé %s %s\nPrix actuel : <b>%s</b>" % (
+                F.esc(a["asset"]), "sous" if a["op"] == "<" else "au-dessus de", F.price(a["price"]), F.price(last)),
+                [[("🔁 Réactiver", "cmd:alert_re:%s:%s:%s" % (a["asset"], "lt" if a["op"] == "<" else "gt", a["price"])),
+                  ("🔎 Analyse", "m:/info %s" % a["asset"])]])
+        self.store.set("price_alerts", keep)
+
+    # --------------------------------------------------------- objectif (8)
+    def goal_status(self):
+        g = self.cfg.get("goal") or {}
+        if not g.get("amount"):
+            return None
+        pf = self.portfolio()
+        ev = self.store.get("etf_value")
+        stocks = ev["value"] if ev else sum(self.stock_invested().values())
+        current = pf["value"] + stocks
+        out = {"amount": float(g["amount"]), "date": g.get("date", ""), "current": current,
+               "progress": max(0.0, min(1.0, current / g["amount"]))}
+        if g.get("date"):
+            y, m = int(g["date"][:4]), int(g["date"][5:7])
+            t = time.localtime(self.clock())
+            months = (y - t.tm_year) * 12 + (m - t.tm_mon)
+            monthly = self.cfg["budget"]["monthly_crypto_eur"] + self.cfg["budget"]["monthly_etf_eur"]
+            out.update(months=max(0, months), monthly=monthly, projected=current + monthly * max(0, months),
+                       needed=((g["amount"] - current) / months) if months > 0 else None)
+        return out
+
+    def goal_text(self):
+        g = self.goal_status()
+        if not g:
+            return ("🎯 <b>Aucun objectif d'épargne</b>\nExemple : <code>/objectif 1000 2027-06</code> "
+                    "(1 000 € d'ici juin 2027).")
+        lines = ["🎯 <b>Objectif : %s</b>%s" % (eur(g["amount"]), (" d'ici %s %s" % (F.MOIS[int(g["date"][5:7]) - 1], g["date"][:4]))
+                                                if g["date"] else ""),
+                 "%s <b>%s</b> (%.0f %%)" % (F.bar(g["progress"]), eur(g["current"]), g["progress"] * 100)]
+        if g["progress"] >= 1:
+            lines.append("🎉 Objectif atteint !")
+        elif g.get("months") is not None:
+            if g["months"] <= 0:
+                lines.append("⌛ La date est passée. Change-la : <code>/objectif %d 2027-12</code>" % g["amount"])
+            elif g["projected"] >= g["amount"]:
+                lines.append("✅ En bonne voie : à %s/mois, tu auras versé de quoi l'atteindre (≈ %s, hors gains et pertes)." % (
+                    eur(g["monthly"], ), eur(g["projected"])))
+            else:
+                lines.append("📏 À %s/mois tu arriverais à ≈ %s (hors gains et pertes).\nIl faudrait ≈ <b>%s/mois</b> pour l'atteindre." % (
+                    eur(g["monthly"]), eur(g["projected"]), eur(g["needed"])))
+        lines.append("<i>Changer : /objectif 1500 2027-12 · Supprimer : /objectif 0</i>")
+        return "\n".join(lines)
+
+    def set_goal(self, amount, date=""):
+        config_mod.update_file(self.cfg_path, "goal", {"amount": float(amount), "date": date})
+        self.reload_config()
+
+    # --------------------------------------------------------- graphique (7)
+    def portfolio_chart_png(self, days=90):
+        from . import png
+        snaps = self.store.snapshots(self.clock() - days * 86400 if days else 0)
+        if len(snaps) < 2:
+            return None
+        lab = lambda ts: time.strftime("%d/%m", time.localtime(ts))
+        return png.line_chart([
+            {"label": "Valeur", "color": "accent", "points": [(x["ts"], x["value"]) for x in snaps]},
+            {"label": "Investi", "color": "series2", "points": [(x["ts"], x["cost"]) for x in snaps], "dash": True}],
+            title="Portefeuille crypto - %s" % ("%d jours" % days if days else "depuis le debut"),
+            x_labels=[lab(snaps[0]["ts"]), lab(snaps[-1]["ts"])])
+
+    # ------------------------------------------------- test sur 12 mois (5)
+    def run_backtest(self):
+        from . import backtest, png
+        res = backtest.run(self.market, self.cfg)
+        n0 = res["series"][0]["i"] if res["series"] else 0
+        total_days = res["days"]
+        ts_of = lambda i: self.clock() - (total_days - (i - n0)) * 86400
+        lab = lambda i: time.strftime("%d/%m", time.localtime(ts_of(i)))
+        ser = res["series"]
+        image = png.line_chart([
+            {"label": "DCA intelligent", "color": "accent", "points": [(p["i"], p["smart"]) for p in ser]},
+            {"label": "DCA simple", "color": "orange", "points": [(p["i"], p["simple"]) for p in ser]},
+            {"label": "Investi", "color": "series2", "points": [(p["i"], p["inv_simple"]) for p in ser], "dash": True}],
+            title="Test sur 12 mois (prix reels)", x_labels=[lab(ser[0]["i"]), lab(ser[-1]["i"])] if ser else None)
+        try:
+            with open(os.path.join(self.base_dir, "data", "backtest.png"), "wb") as f:
+                f.write(image)
+        except OSError:
+            pass
+        summary = {k: res[k] for k in ("days", "assets", "dip_buys", "weeks", "smart", "simple")}
+        summary["ts"] = self.clock()
+        self.store.set("backtest", summary)
+        self.log("info", "Test sur 12 mois : intelligent %s, simple %s" % (
+            pct(res["smart"]["gain_pct"] * 100), pct(res["simple"]["gain_pct"] * 100)))
+        return summary, image
+
+    def backtest_text(self, r):
+        sm, si = r["smart"], r["simple"]
+        diff = sm["value"] / sm["invested"] - si["value"] / si["invested"] if sm["invested"] and si["invested"] else 0
+        verdict = ("✅ Sur cette période, la stratégie de l'outil a fait <b>mieux</b> que l'achat fixe." if diff > 0.005 else
+                   "➖ Sur cette période, la stratégie de l'outil a fait <b>moins bien</b> que l'achat fixe." if diff < -0.005 else
+                   "➖ Sur cette période, les deux méthodes font <b>à peu près pareil</b>.")
+        return ("🧪 <b>Test sur %d jours</b> (vrais prix Revolut X, %s)\n\n"
+                "🧠 <b>DCA intelligent</b> (l'outil)\n   investi %s → <b>%s</b> (%s)\n   pire moment : %s · %d achats renforcés\n"
+                "📏 <b>DCA simple</b> (montant fixe réparti)\n   investi %s → <b>%s</b> (%s)\n   pire moment : %s\n\n%s\n"
+                "<i>Prises de bénéfices non simulées. Les performances passées ne préjugent pas des performances futures.</i>" % (
+                    r["days"], F.esc(", ".join(r["assets"])),
+                    eur(sm["invested"]), eur(sm["value"]), pct(sm["gain_pct"] * 100), pct(sm["worst_pct"] * 100), r["dip_buys"],
+                    eur(si["invested"]), eur(si["value"]), pct(si["gain_pct"] * 100), pct(si["worst_pct"] * 100), verdict))
 
     # ---------------------------------------------------------------- textes
     def status_text(self):
@@ -710,6 +1022,10 @@ class Engine:
                                                        eur(bs["spent"]), eur(bs["monthly"])),
                   "<code>Actions </code> %s %s / %s" % (F.bar(bs["etf_spent"] / bs["etf_monthly"] if bs["etf_monthly"] else 0),
                                                        eur(bs["etf_spent"]), eur(bs["etf_monthly"])), ""]
+        g = self.goal_status()
+        if g:
+            lines.append("🎯 <b>Objectif</b> %s : %s %s (%.0f %%)" % (eur(g["amount"]), F.bar(g["progress"]), eur(g["current"]),
+                                                                 g["progress"] * 100))
         lines.append("🗓 <b>Prochain achat</b> : %s (≈ %s)" % (F.when(self.next_dca_ts(), self.clock()), eur(bs["weekly_base"])))
         try:
             lines.append("🏦 <b>Solde Revolut X</b> : %s" % eur(self.broker.balances().get(self.cfg["quote"], 0)))
@@ -834,6 +1150,15 @@ class Engine:
         except (OSError, ValueError):
             return None
 
+    def _settings_state(self):
+        from .telegram_bot import SETTINGS, JOURS as JRS, _get
+        out = []
+        for name, (key, conv, lo, hi, desc) in SETTINGS.items():
+            v = _get(self.cfg, key)
+            kind = "bool" if isinstance(v, bool) else ("day" if key == "dca.weekday" else ("text" if conv is str else "number"))
+            out.append({"name": name, "value": (JRS[v] if kind == "day" else v), "desc": desc, "kind": kind, "min": lo, "max": hi})
+        return out
+
     def state(self):
         """Toutes les données pour l'interface web."""
         pf = self.portfolio()
@@ -857,6 +1182,12 @@ class Engine:
                     "targets": self.stock_targets(), "by_line": self.stock_invested()},
             "radar": self._radar_state(),
             "next_etf": self.next_etf_ts(),
+            "goal": self.goal_status(),
+            "alerts": self.price_alerts(),
+            "backtest": self.store.get("backtest"),
+            "settings": self._settings_state(),
+            "reconcile": self.store.get("reconcile_last"),
+            "backups": __import__("microinvest.backup", fromlist=["list_local"]).list_local(self.base_dir)[:5],
             "version": self.version_info(),
             "stock_plan": self.stock_plan(),
             "stock_labels": {k: self.stock_label(k) for k in self.stock_targets()},

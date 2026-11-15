@@ -26,7 +26,8 @@ Les phases 1 à 6 se font **sans argent réel** (mode simulation). Le réel arri
 - **Actions/ETF le 5 de chaque mois** : Revolut n'a pas d'API pour les actions. Le bot t'envoie donc à 18 h la liste à acheter dans l'appli (par défaut 15 € d'IWDA). Tu le fais en 1 minute, puis tu appuies sur **Fait**.
 - **Radar chaque matin** : il note toutes les cryptos de Revolut X et une trentaine d'actions/ETF, et te propose d'ajouter les mieux notées en un clic.
 - **Chaque dimanche à 19 h** : il t'envoie un rapport sur Telegram.
-- **Tout se pilote depuis Telegram** avec des boutons : achats, pause, réglages, clé Revolut X, mises à jour. L'interface web ne sert qu'à consulter, et seulement depuis le Wi-Fi de la maison.
+- **Tout se pilote depuis Telegram ou depuis l'interface web** (à la maison), avec des boutons : achats, pause, réglages, Radar, objectif, alertes, export fiscal, sauvegarde, clé Revolut X, mises à jour.
+- **Il veille pour toi** : message chaque matin (preuve qu'il tourne), alerte quand le solde Revolut X baisse, sauvegarde chaque nuit, vérification quotidienne que ses comptes correspondent à Revolut X.
 
 ### « Jamais en négatif » : ce qui est garanti, ce qui ne l'est pas
 
@@ -159,8 +160,9 @@ Si l'outil plante, `run.sh` le relance automatiquement après 30 secondes.
 
 L'interface refuse toute connexion qui ne vient pas de ton réseau local. Il n'y a rien à ouvrir sur ta box.
 
-1. Sur Telegram : **⚙️ Menu** → **🌐 Interface web**. Le bot t'envoie l'adresse, par exemple `http://192.168.1.50:8088`.
+1. Sur Telegram : **⚙️ Menu** → **⚙️ Système** → **🌐 Interface web**. Le bot t'envoie l'adresse, par exemple `http://192.168.1.50:8088`.
 2. Ouvre-la depuis un appareil connecté au **Wi-Fi de la maison**. Identifiant : `admin`. Mot de passe : celui de la phase 3.
+3. Tu y trouves 5 onglets : **Portefeuille**, **Radar**, **Actions** (tous les boutons de commande), **Historique**, **Réglages** (modifiables directement). Tout ce qui se fait sur Telegram se fait aussi ici.
 3. Si tu avais créé une règle de *proxy inversé* ou une redirection de port pour Micro-invest, supprime-la.
 
 ### 6b. Brancher les mises à jour (une seule fois)
@@ -204,7 +206,7 @@ En bas de l'écran (toujours visibles) :
 | 🛒 Acheter | Fait l'achat de la semaine maintenant (avec confirmation) |
 | ❓ Questions | Réaffiche les questions en attente |
 | ⏸ Pause / ▶️ Reprendre | Suspend ou relance les achats automatiques |
-| ⚙️ Menu | Tout le reste : 🔭 Radar, plan actions, historique, journal, budget, réglages, mode, mise à jour, version précédente, redémarrer, interface web, clé Revolut X |
+| ⚙️ Menu | 🔭 Radar · 📈 Plan actions · 🎯 Objectif · 🔔 Alertes · 📉 Graphique · 📜 Historique · 🧰 Outils (budget, vérification, sauvegarde, export fiscal, test 12 mois, journal) · 🔧 Réglages · ⚙️ Système (mise à jour, version, redémarrer, mode, clé, web) |
 
 Si les boutons ont disparu, envoie `/start`.
 
@@ -214,7 +216,7 @@ Si les boutons ont disparu, envoie `/start`.
 
 1. **Ouvrir Revolut X** : sur ton ordinateur, va sur `exchange.revolut.com` et connecte-toi avec l'appli Revolut (QR code).
 2. **Alimenter en euros** : dans Revolut X → *Déposer* → EUR depuis ton compte Revolut. Conseil : 70 € (2 mois de budget crypto). L'outil n'utilisera jamais plus que ce solde.
-3. **Clé de signature** : sur Telegram, **⚙️ Menu** → **🔑 Clé Revolut X**. Le NAS crée la clé et t'envoie la partie publique, qui peut être partagée sans risque. Copie tout le bloc, de `-----BEGIN PUBLIC KEY-----` à `-----END PUBLIC KEY-----`.
+3. **Clé de signature** : sur Telegram, **⚙️ Menu** → **⚙️ Système** → **🔑 Clé Revolut X** (ou onglet **Actions** du web). Le NAS crée la clé et t'envoie la partie publique, qui peut être partagée sans risque. Copie tout le bloc, de `-----BEGIN PUBLIC KEY-----` à `-----END PUBLIC KEY-----`.
 4. **Clé API** : dans Revolut X → *Profil* → *API keys* → *Créer* → colle la clé publique → nom : `microinvest` → autorise le **trading**, rien d'autre. Copie la **clé API** affichée.
 5. **L'envoyer au bot** :
 
@@ -223,8 +225,9 @@ Si les boutons ont disparu, envoie `/start`.
 ```
 
    Le bot vérifie la clé auprès de Revolut X, l'enregistre et **efface ton message**. Attendu : « ✅ Clé API valide … Solde EUR : 70,00 € ».
-6. **Basculer** : **⚙️ Menu** → **🔁 Mode simu/réel** → **💶 Passer en réel** → confirme.
-7. **Premier ordre de contrôle** : bouton **🛒 Acheter** → **Oui**. Vérifie dans Revolut X que l'achat apparaît.
+6. **Vérifier** : **⚙️ Menu** → **🧰 Outils** → **🔍 Vérifier Revolut X**.
+7. **Basculer** : **⚙️ Menu** → **⚙️ Système** → **🔁 Mode simu/réel** → **💶 Passer en réel** → confirme.
+8. **Premier ordre de contrôle** : bouton **🛒 Acheter** → **Oui**. Vérifie dans Revolut X que l'achat apparaît.
 
 La simulation et le réel ont des historiques séparés (`data/paper.db` et `data/live.db`).
 
@@ -235,13 +238,13 @@ La simulation et le réel ont des historiques séparés (`data/paper.db` et `dat
 ## Mises à jour (30 secondes)
 
 Quand je publie une nouvelle version sur GitHub :
-1. **⚙️ Menu** → **⬆️ Mise à jour**.
+1. **⚙️ Menu** → **⚙️ Système** → **⬆️ Mise à jour** (ou onglet **Actions** du web).
 2. Le bot affiche la nouvelle version et ce qu'elle change → **⬆️ Installer**.
 3. Le NAS télécharge la version, vérifie la syntaxe et lance les **tests automatiques**. Si un seul test échoue, **rien n'est changé**.
 4. Il sauvegarde la version actuelle, installe la nouvelle et redémarre (« 🚀 démarré — Version : … »).
 5. Au bout de 90 secondes : « ✅ Mise à jour validée ». Si la nouvelle version plante au démarrage, l'ancienne est **remise automatiquement** et tu reçois une alerte.
 
-Revenir en arrière à la main : **⚙️ Menu** → **↩️ Version précédente**.
+Revenir en arrière à la main : **⚙️ Système** → **↩️ Version précédente**.
 Ce qui n'est jamais modifié par une mise à jour : `config.json`, `keys/`, `data/`, `logs/`.
 
 ---
@@ -284,8 +287,36 @@ Revolut n'a pas d'API pour les actions : cette partie reste manuelle, mais guid�
 
 ---
 
-## Modifier les réglages (depuis Telegram)
+## Ce que l'outil surveille tout seul
 
+| Quand | Quoi | Si problème |
+|---|---|---|
+| Chaque matin à 8 h | ☀️ Message « Micro-invest tourne ✅ » + programme du jour | **Pas de message = l'outil est arrêté** : Planificateur de tâches → `Micro-invest` → Exécuter |
+| Toutes les heures | Solde EUR sur Revolut X | 🏦 Alerte si le solde couvre moins de 2 semaines d'achats |
+| Chaque nuit à 3 h | 🛟 Sauvegarde complète dans `backups/` sur le NAS (14 gardées) | Alerte si la sauvegarde échoue |
+| Chaque matin à 9 h | 🔍 Comparaison de ses comptes avec Revolut X | Alerte + bouton « Aligner » en cas d'écart (vente ou retrait manuel) |
+| Toutes les 5 min | 🔔 Tes alertes de prix | Message dès qu'un seuil est franchi |
+
+---
+
+## Les outils (Telegram : ⚙️ Menu → 🧰 Outils · Web : onglet Actions)
+
+- **🎯 Objectif** : `/objectif 1000 2027-06` → progression et effort mensuel nécessaire (affichés aussi chaque matin).
+- **🔔 Alertes de prix** : `/alerte BTC < 55000`, `/alerte ETH > 4000` ; la liste et les 🗑 avec `/alertes`.
+- **📉 Graphique** : courbe de ton portefeuille en image (30 j, 90 j ou tout). Envoyée aussi chaque dimanche avec le rapport.
+- **🧪 Test sur 12 mois** : rejoue ta stratégie sur les vrais prix de l'année passée et la compare à un achat fixe.
+- **🧾 Export fiscal** : `/export 2026` → 2 fichiers CSV (toutes les opérations, plus-values crypto selon la méthode du formulaire 2086) + le résumé (exonération sous 305 € de ventes, impôt estimé).
+- **🛟 Sauvegarde** : sauvegarde complète sur le NAS + copie **sans aucun secret** envoyée sur Telegram (ou téléchargeable sur le web).
+
+**Restaurer une sauvegarde** : arrête l'outil (`stop.sh`), décompresse `backups/microinvest-AAAA-MM-JJ.zip` dans `/volume1/docker/microinvest` (accepte de remplacer `config.json`, `data/`, `keys/`), puis relance la tâche.
+
+---
+
+## Modifier les réglages (Telegram ou web)
+
+Sur le web : onglet **Réglages**, change la valeur puis **OK** (cibles crypto et plan actions modifiables au même endroit).
+
+Sur Telegram :
 1. **⚙️ Menu** → **🔧 Réglages** : le bot affiche chaque réglage, sa valeur et son nom.
 2. Change une valeur avec `/regler nom valeur`. C'est appliqué tout de suite, sans redémarrage :
 

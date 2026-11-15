@@ -34,8 +34,11 @@ MAX_FAILS = 5          # mots de passe faux autorisés…
 FAIL_WINDOW = 15 * 60  # …sur 15 minutes, ensuite blocage de l'adresse IP pendant 15 minutes
 
 
-def make_handler(engine, password, clock=time.time):
+def make_handler(engine, password, clock=time.time, commands=None):
     page_path = os.path.join(HERE, "dashboard.html")
+    if commands is None:
+        from .telegram_bot import WebCommands
+        commands = WebCommands(engine, base_dir=engine.base_dir)
     fails = {}  # ip -> [horodatages des échecs]
     fails_lock = threading.Lock()
 
@@ -125,8 +128,48 @@ def make_handler(engine, password, clock=time.time):
                 except Exception as e:
                     log.exception("state")
                     self._json({"error": str(e)}, 500)
+            elif self.path.startswith("/api/file/"):
+                f = commands.files.get(self.path.rsplit("/", 1)[1])
+                if not f:
+                    return self._send(404, "{}")
+                self._download(f[1], f[2], f[0], inline=f[2].startswith("image/"))
+            elif self.path.startswith("/api/chart/portfolio.png"):
+                q = self.path.partition("?")[2]
+                days = int(q.split("=")[1]) if q.startswith("days=") and q.split("=")[1].isdigit() else 90
+                img = engine.portfolio_chart_png(days)
+                if not img:
+                    return self._send(404, "{}")
+                self._download(img, "image/png", "portefeuille.png", inline=True)
+            elif self.path.startswith("/api/chart/backtest.png"):
+                p = os.path.join(engine.base_dir, "data", "backtest.png")
+                if not os.path.exists(p):
+                    return self._send(404, "{}")
+                with open(p, "rb") as fh:
+                    self._download(fh.read(), "image/png", "test-12-mois.png", inline=True)
+            elif self.path == "/api/download/operations.csv":
+                from . import tax
+                self._download(tax.operations_csv(engine.store), "text/csv; charset=utf-8", "operations-%s.csv" % engine.mode)
+            elif self.path.startswith("/api/download/plusvalues-") and self.path.endswith(".csv"):
+                from . import tax
+                y = self.path[len("/api/download/plusvalues-"):-4]
+                if not y.isdigit():
+                    return self._send(404, "{}")
+                self._download(tax.plus_values_csv(engine.store, int(y)), "text/csv; charset=utf-8", "plus-values-%s.csv" % y)
+            elif self.path == "/api/download/backup.zip":
+                from . import backup
+                self._download(backup.build_zip(engine.base_dir, with_secrets=False), "application/zip",
+                               "microinvest-sauvegarde-sans-secrets.zip")
             else:
                 self._send(404, "{}")
+
+        def _download(self, data, ctype, filename, inline=False):
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Disposition", '%s; filename="%s"' % ("inline" if inline else "attachment", filename))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
             if not self._auth():
@@ -141,6 +184,12 @@ def make_handler(engine, password, clock=time.time):
                 body = {}
             p = self.path
             try:
+                if p == "/api/cmd":
+                    text, button = str(body.get("text") or "")[:500], str(body.get("button") or "")[:200]
+                    if not text and not button:
+                        return self._json({"error": "commande vide"}, 400)
+                    engine.log("info", "Web : %s" % (button or text.split()[0]))
+                    return self._json({"messages": commands.run(text=text or None, button=button or None)})
                 if p == "/api/pause":
                     engine.store.set("paused", True)
                     engine.log("info", "Pause demandée depuis le web")
@@ -177,10 +226,10 @@ def make_handler(engine, password, clock=time.time):
     return H
 
 
-def start(engine, host, port, password, clock=time.time):
+def start(engine, host, port, password, clock=time.time, commands=None):
     if not password:
         raise ValueError("web.password vide dans config.json")
-    srv = _Server((host, int(port)), make_handler(engine, password, clock))
+    srv = _Server((host, int(port)), make_handler(engine, password, clock, commands))
     th = threading.Thread(target=srv.serve_forever, name="web", daemon=True)
     th.start()
     log.info("Interface web : http://%s:%s", host, port)

@@ -174,10 +174,21 @@ class RevolutXBroker:
         url = BASE_URL + "/api/" + path + ("?" + qs if qs else "")
         return _http(method, url, headers, body_str if body is not None else None)
 
-    def balances(self):
+    def _balance_rows(self):
         data = self._private("GET", "1.0/balances")
-        rows = data if isinstance(data, list) else (data or {}).get("data", [])
-        return {r["currency"]: float(r.get("available") or 0) for r in rows}
+        return data if isinstance(data, list) else (data or {}).get("data", [])
+
+    def balances(self):
+        """Montants disponibles (utilisables tout de suite)."""
+        return {r["currency"]: float(r.get("available") or 0) for r in self._balance_rows()}
+
+    def holdings(self):
+        """Montants détenus au total (disponible + réservé dans des ordres en cours)."""
+        out = {}
+        for r in self._balance_rows():
+            tot = r.get("total")
+            out[r["currency"]] = float(tot) if tot is not None else float(r.get("available") or 0) + float(r.get("reserved") or 0)
+        return out
 
     def market_order(self, asset, side, quote_eur=None, base_qty=None):
         """Place un ordre au marché et attend son exécution (max ~20 s)."""
@@ -240,6 +251,9 @@ class PaperBroker:
 
     def balances(self):
         return dict(self.store.get("paper_balances") or {})
+
+    def holdings(self):
+        return self.balances()
 
     def _save(self, b):
         self.store.set("paper_balances", b)

@@ -272,7 +272,11 @@ class Radar:
             crypto = self.scan_crypto()
             stocks = self.scan_stocks()
             data = {"ts": self.clock(), "crypto": crypto, "stocks": stocks, "duration": self.clock() - t0}
+            prev = self.engine.store.get("radar")
             self.engine.store.set("radar", data)
+            change = self.changes_message(prev, data)
+            if change:
+                self.engine.notify(*change)
             self.engine.log("info", "Radar : %d cryptos et %d actions/ETF analysées" % (len(crypto), len(stocks)))
             if notify:
                 self.engine.notify(self.summary_text(data), self.summary_buttons(data))
@@ -285,6 +289,37 @@ class Radar:
             return None
         finally:
             self.running.release()
+
+    def changes_message(self, prev, data):
+        """Nouveaux ⭐ et actifs de ton plan passés en ⛔ depuis l'analyse précédente."""
+        if not prev:
+            return None
+        before = {r["symbol"]: r["label"] for r in prev.get("crypto", []) + prev.get("stocks", [])}
+        now = data["crypto"] + data["stocks"]
+        stars = [r for r in now if r["label"].startswith("⭐") and not before.get(r["symbol"], "").startswith("⭐")]
+        bad = [r for r in now if r["label"].startswith("⛔") and self._in_plan(r) and not before.get(r["symbol"], "").startswith("⛔")]
+        if not stars and not bad:
+            return None
+        name = lambda r: r["symbol"] if r["kind"] == "crypto" else r["name"]
+        lines = ["🔭 <b>Changements du Radar</b>"]
+        if stars:
+            lines.append("\n⭐ <b>Nouveaux « intéressants »</b>")
+            lines += ["• <b>%s</b> %d/100 — <i>%s</i>%s" % (F.esc(name(r)), r["score"], F.esc(key_reason(r)),
+                                                          " ✅ dans ton plan" if self._in_plan(r) else "") for r in stars[:6]]
+        if bad:
+            lines.append("\n⛔ <b>Dans ton plan, à surveiller de près</b>")
+            lines += ["• <b>%s</b> %d/100 — <i>%s</i>" % (F.esc(name(r)), r["score"], F.esc(key_reason(r))) for r in bad]
+            lines.append("<i>Le DCA continue d'en acheter tant que tu ne le retires pas.</i>")
+        buttons = []
+        adds = [("➕ %s" % (r["symbol"] if r["kind"] == "crypto" else r.get("search", r["symbol"]).split(" /")[0]),
+                 "add:%s:%s" % ("c" if r["kind"] == "crypto" else "s", r["symbol"])) for r in stars if not self._in_plan(r)][:3]
+        if adds:
+            buttons.append(adds)
+        rms = [("➖ Retirer %s" % r["symbol"].split(".")[0], "rm:%s:%s" % ("c" if r["kind"] == "crypto" else "s", r["symbol"]))
+               for r in bad][:3]
+        if rms:
+            buttons.append(rms)
+        return "\n".join(lines), (buttons or None)
 
     def run_async(self, notify=True):
         if self.running.locked():
