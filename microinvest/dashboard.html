@@ -92,6 +92,16 @@ svg text{fill:var(--muted);font-size:11px}
     <p class="muted" id="etfline"></p>
   </div>
 
+  <div class="card">
+    <h2>Radar — les mieux notés</h2>
+    <p class="muted" id="radar-meta">Pas encore d'analyse : elle tourne chaque matin (ou bouton « 🔭 Radar » sur Telegram).</p>
+    <div class="two">
+      <div><h2 style="font-size:13px">Cryptos</h2><div class="scroll"><table><tbody id="t-rc"></tbody></table></div></div>
+      <div><h2 style="font-size:13px">Actions &amp; ETF</h2><div class="scroll"><table><tbody id="t-rs"></tbody></table></div></div>
+    </div>
+    <p class="muted">Règles chiffrées (tendance, élan, point d'entrée, risque) : ce n'est pas une prédiction. Ajout au plan depuis Telegram.</p>
+  </div>
+
   <div class="two">
     <div class="card"><h2>Dernières opérations</h2><div class="scroll"><table><tbody id="t-tr"></tbody></table></div></div>
     <div class="card"><h2>Journal</h2><div class="scroll"><table><tbody id="t-ev"></tbody></table></div></div>
@@ -175,9 +185,9 @@ function render(s){
     <td>${r.weight_pct.toFixed(0)} / ${r.target_pct.toFixed(0)} %<span class="wbar"><i style="width:${Math.min(100,r.weight_pct)}%"></i><b style="left:${Math.min(100,r.target_pct)}%"></b></span></td></tr>`).join("");
 
   const e=s.etf;
-  $("etfline").textContent = "ETF " + e.name + " (semi-auto via l'appli Revolut) : " + eur(e.invested) + " investis" +
+  $("etfline").textContent = "Actions/ETF (" + e.name + ", achats guidés dans l'appli Revolut) : " + eur(e.invested) + " investis" +
     (e.value ? " · valeur déclarée " + eur(e.value.value) + " le " + dt(e.value.ts) : " · valeur pas encore déclarée") +
-    " · budget ETF du mois : " + eur(b.etf_spent) + " / " + eur(b.etf_monthly);
+    " · budget actions du mois : " + eur(b.etf_spent) + " / " + eur(b.etf_monthly);
 
   $("t-tr").innerHTML = s.trades.length ? s.trades.map(t => `<tr><td>${dt(t.ts)}</td><td>${t.kind==="etf"?"ETF":esc(t.asset)}</td>
     <td class="${t.side==="buy"?"":"pos"}">${t.side==="buy"?"Achat":"Vente"}</td><td>${eur(t.eur)}</td></tr>`).join("")
@@ -195,6 +205,15 @@ function render(s){
   ].map(x=>"• "+x).join("<br>");
 
   chart(s.snapshots);
+
+  const rd = s.radar, inPlan = (r) => r.kind==="crypto" ? (r.symbol in s.config.targets) : (r.symbol in (s.etf.targets||{}));
+  if(rd){
+    $("radar-meta").textContent = "Analyse du " + dt(rd.ts) + " · " + rd.n_crypto + " cryptos et " + rd.n_stocks + " actions/ETF notées sur 100.";
+    const row = r => `<tr><td><b>${esc(r.kind==="crypto"?r.symbol:r.name)}</b>${inPlan(r)?" ✅":""}</td><td>${r.score}/100</td>
+      <td style="text-align:left">${esc(r.label)}</td><td style="text-align:left;white-space:normal" class="muted">${esc(r.reason)}</td></tr>`;
+    $("t-rc").innerHTML = rd.crypto.slice(0,8).map(row).join("") || `<tr><td class="muted">indisponible</td></tr>`;
+    $("t-rs").innerHTML = rd.stocks.slice(0,8).map(row).join("") || `<tr><td class="muted">indisponible</td></tr>`;
+  }
 }
 
 async function load(){

@@ -19,8 +19,9 @@ KEY_TO_CMD = {"📊 Statut": "/statut", "💼 Portefeuille": "/portefeuille", "�
               "❓ Questions": "/questions", "⏸ Pause": "/pause", "▶️ Reprendre": "/reprendre", "⚙️ Menu": "/menu"}
 
 MENU = [
+    [("🔭 Radar (conseils)", "m:/radar"), ("📈 Plan actions/ETF", "m:/actions")],
     [("📜 Historique", "m:/historique"), ("📒 Journal", "m:/journal")],
-    [("📈 ETF du mois", "m:/etf"), ("💶 Budget", "m:/budget")],
+    [("🧾 Déclarer achat actions", "m:/etf"), ("💶 Budget", "m:/budget")],
     [("🔧 Réglages", "m:/reglages"), ("🔁 Mode simu/réel", "m:/mode")],
     [("⬆️ Mise à jour", "m:/maj"), ("↩️ Version précédente", "m:/retour")],
     [("🔄 Redémarrer", "m:/redemarrer"), ("🌐 Interface web", "m:/web")],
@@ -31,7 +32,8 @@ BOT_COMMANDS = [
     ("menu", "Tous les boutons"), ("statut", "État, budget, prochain achat"), ("portefeuille", "Positions et gains"),
     ("acheter", "Achat de la semaine maintenant"), ("questions", "Questions en attente"), ("pause", "Suspendre les achats"),
     ("reprendre", "Relancer les achats"), ("historique", "Dernières opérations"), ("journal", "Journal des événements"),
-    ("etf", "Achat ETF du mois"), ("reglages", "Voir / modifier les réglages"), ("maj", "Mettre à jour l'outil"),
+    ("radar", "Conseils : cryptos et actions les mieux notées"), ("actions", "Plan actions/ETF"),
+    ("info", "Détail d'un actif (ex. /info SOL)"), ("etf", "Déclarer un achat actions/ETF"), ("reglages", "Voir / modifier les réglages"), ("maj", "Mettre à jour l'outil"),
     ("version", "Version installée"), ("mode", "Simulation ou réel"), ("aide", "Aide"),
 ]
 
@@ -44,6 +46,9 @@ Commandes avec une valeur :
 /etfvaleur 230.50 — valeur actuelle de ta ligne ETF
 /regler budget_crypto 40 — changer un réglage (liste : /reglages)
 /cible SOL 12 — changer le poids d'une crypto (0 = la retirer)
+/cible_action NVDA 20 — poids d'une action/ETF dans ton plan (0 = la retirer)
+/info SOL — analyse détaillée d'un actif par le radar
+/radar crypto · /radar actions · /radar maj — classements, nouvelle analyse
 /cleapi TA_CLE — enregistrer la clé API Revolut X (message effacé)
 /depot proprietaire/depot [jeton] — dépôt GitHub des mises à jour (message effacé)
 /mode reel · /mode simu — changer de mode"""
@@ -73,7 +78,7 @@ def _parse_day(v):
 # nom court -> (clé config, conversion, min, max, description)
 SETTINGS = {
     "budget_crypto": ("budget.monthly_crypto_eur", float, 0, 1000, "Budget crypto par mois (€)"),
-    "budget_etf": ("budget.monthly_etf_eur", float, 0, 1000, "Budget ETF par mois (€)"),
+    "budget_etf": ("budget.monthly_etf_eur", float, 0, 1000, "Budget actions/ETF par mois (€)"),
     "max_ordre": ("budget.max_order_eur", float, 1, 1000, "Montant maximum d'un ordre (€)"),
     "validation_au_dela": ("budget.approval_above_eur", float, 0, 1000, "Au-delà, je te demande ton accord (€)"),
     "reserve": ("budget.keep_reserve_eur", float, 0, 100000, "Euros jamais utilisés sur Revolut X"),
@@ -83,8 +88,8 @@ SETTINGS = {
     "plafond_perte": ("safety.max_drawdown_pct", float, 1, 90, "Perte (%) qui gèle les achats"),
     "prise_benefices": ("take_profit.gain_pct", float, 5, 1000, "Gain (%) qui déclenche une proposition de vente"),
     "prise_benefices_active": ("take_profit.enabled", _parse_bool, None, None, "Propositions de vente (oui/non)"),
-    "jour_etf": ("etf.day_of_month", int, 1, 28, "Jour du mois du rappel ETF"),
-    "nom_etf": ("etf.name", str, None, None, "Nom de l'ETF à acheter"),
+    "jour_etf": ("etf.day_of_month", int, 1, 28, "Jour du mois du rappel actions/ETF"),
+    "radar_heure": ("radar.hour", int, 0, 23, "Heure de l'analyse quotidienne du radar"),
 }
 
 
@@ -298,9 +303,11 @@ class TelegramBot:
         if cmd == "/etf":
             if not args:
                 amt = e.cfg["budget"]["monthly_etf_eur"]
-                return ("📈 ETF du mois : %s\nAchète-le dans l'appli Revolut (Investir), puis déclare-le ici.\n"
-                        "Autre montant : /etf 12.50 · Valeur de ta ligne : /etfvaleur 230" % e.cfg["etf"]["name"],
-                        [[("✅ J'ai acheté %.2f €" % amt, "cmd:etf_default")]])
+                plan = e.stock_plan()
+                detail = "\n".join("• %s : %.2f €" % (e.stock_label(k), a) for k, a in plan) or "(plan vide)"
+                return ("🧾 Achats actions/ETF prévus ce mois-ci :\n%s\n\nAchète-les dans l'appli Revolut (Investir), "
+                        "puis déclare-les ici.\nAutre montant : /etf 12.50 · Valeur totale : /etfvaleur 230" % detail,
+                        [[("✅ J'ai acheté ces %.2f €" % amt, "cmd:etf_default")]])
             amt = _num(args)
             if amt is None or amt <= 0 or amt > 10000:
                 return "Usage : /etf 15  (montant en euros acheté dans l'appli Revolut)"
@@ -325,6 +332,21 @@ class TelegramBot:
             return self.set_setting(args)
         if cmd == "/cible":
             return self.set_target(args)
+        if cmd == "/radar":
+            return self.radar_cmd(args)
+        if cmd == "/info":
+            if not args:
+                return "Usage : /info SOL  ou  /info NVDA"
+            rd = e.get_radar().latest()
+            text, r = e.get_radar().info_text(rd, args[0])
+            if r and not e.get_radar()._in_plan(r):
+                k = "c" if r["kind"] == "crypto" else "s"
+                return (text, [[("➕ Ajouter à mon plan", "add:%s:%s" % (k, r["symbol"]))]])
+            return text
+        if cmd == "/actions":
+            return self.stock_plan_text()
+        if cmd == "/cible_action":
+            return self.set_stock_target(args)
         if cmd == "/web":
             port = e.cfg["web"]["port"]
             return ("🌐 Interface web (uniquement depuis le Wi-Fi de la maison) :\nhttp://%s:%s\n"
@@ -363,8 +385,17 @@ class TelegramBot:
         if data == "cmd:resume_freeze":
             return e.resume_freeze()
         if data == "cmd:etf_default":
-            e.record_etf(e.cfg["budget"]["monthly_etf_eur"])
+            plan = e.stock_plan()
+            e.record_etf(sum(a for _, a in plan), plan)
             return None
+        if data.startswith("add:"):
+            _, k, sym = data.split(":", 2)
+            return self.confirm_add(k, sym)
+        if data.startswith("addok:"):
+            _, k, sym, w = data.split(":", 3)
+            return self.set_target([sym, w]) if k == "c" else self.set_stock_target([sym, w])
+        if data == "cmd:radar_run":
+            return self.radar_cmd(["maj"])
         if data == "cmd:ask_live":
             return self.on_command("/mode reel")
         if data == "cmd:ask_paper":
@@ -459,6 +490,94 @@ class TelegramBot:
             return "❌ %s" % ex
         e.log("info", "Cibles modifiées : %s" % targets)
         return "✅ Cibles : " + " · ".join("%s %g" % kv for kv in targets.items())
+
+    # ------------------------------------------------------------- radar
+    def radar_cmd(self, args):
+        radar = self.engine.get_radar()
+        sub = args[0].lower() if args else ""
+        rd = radar.latest()
+        if sub in ("maj", "update", "nouveau"):
+            if radar.run_async(notify=True):
+                return "🔭 Analyse lancée : toutes les cryptos Revolut X + %d actions/ETF. Résultat dans 2 à 4 min." % len(
+                    __import__("microinvest.radar", fromlist=["STOCKS"]).STOCKS)
+            return "🔭 Une analyse est déjà en cours, le résultat arrive."
+        if not rd:
+            radar.run_async(notify=True)
+            return "🔭 Première analyse lancée (2 à 4 min). Je t'envoie le résultat dès qu'il est prêt."
+        if sub in ("crypto", "cryptos"):
+            return radar.ranking_text(rd, "crypto")
+        if sub in ("actions", "action", "etf", "stocks"):
+            return radar.ranking_text(rd, "stocks")
+        text = radar.summary_text(rd)
+        if self.engine.clock() - rd["ts"] > 26 * 3600:
+            text += "\n\n(Analyse de plus d'un jour.)"
+        buttons = radar.summary_buttons(rd) or []
+        buttons.append([("🔄 Nouvelle analyse", "cmd:radar_run")])
+        return (text, buttons)
+
+    def confirm_add(self, k, sym):
+        e = self.engine
+        if k == "c":
+            t = e.cfg["dca"]["targets"]
+            w = max(1.0, round(min(t.values()) if t else 5.0, 1))
+            share = w / (sum(t.values()) + w) * 100
+            return ("Ajouter %s à ton plan crypto ?\nPoids %g → environ %.0f %% de tes achats crypto.\n"
+                    "(Le budget mensuel ne change pas : les autres cryptos auront un peu moins.)" % (sym, w, share),
+                    [[("✅ Ajouter", "addok:c:%s:%g" % (sym, w)), ("❌ Non", "cmd:noop")]])
+        t = e.stock_targets()
+        w = 20.0
+        share = w / (sum(t.values()) + w) * 100
+        return ("Ajouter %s à ton plan actions/ETF ?\nPoids %g → environ %.0f %% de ton budget actions (%.2f €/mois).\n"
+                "Tu l'achèteras dans l'appli Revolut lors du rappel mensuel." % (
+                    e.stock_label(sym), w, share, e.cfg["budget"]["monthly_etf_eur"]),
+                [[("✅ Ajouter", "addok:s:%s:%g" % (sym, w)), ("❌ Non", "cmd:noop")]])
+
+    def stock_plan_text(self):
+        e = self.engine
+        t = e.stock_targets()
+        tsum = float(sum(t.values())) or 1
+        inv = e.stock_invested()
+        lines = ["📈 Plan actions/ETF — %.2f €/mois (achats manuels guidés)" % e.cfg["budget"]["monthly_etf_eur"], ""]
+        for k, w in sorted(t.items(), key=lambda kv: -kv[1]):
+            lines.append("• %s — cible %.0f %% · investi %.2f €" % (e.stock_label(k), w / tsum * 100, inv.get(k, 0.0)))
+        plan = e.stock_plan()
+        if plan:
+            lines += ["", "Prochain rappel (le %d) :" % e.cfg["etf"]["day_of_month"]]
+            lines += ["   %s : %.2f €" % (k, a) for k, a in plan]
+        lines += ["", "Ajouter/retirer : /cible_action NVDA 20 (0 = retirer) · Idées : bouton « 🔭 Radar »"]
+        return "\n".join(lines)
+
+    def set_stock_target(self, args):
+        e = self.engine
+        if len(args) != 2:
+            return "Usage : /cible_action NVDA 20  (poids relatif ; 0 = retirer)"
+        from .radar import STOCK_INFO
+        sym = args[0].upper()
+        match = [k for k in STOCK_INFO if k.upper() == sym or k.split(".")[0].upper() == sym]
+        targets = e.stock_targets()
+        if not match and sym not in targets:
+            return "❌ %s n'est pas dans la liste suivie. Disponibles : %s" % (
+                sym, ", ".join(k.split(".")[0] for k in STOCK_INFO))
+        key = match[0] if match else sym
+        try:
+            w = float(args[1].replace(",", "."))
+        except ValueError:
+            return "Usage : /cible_action NVDA 20"
+        if w <= 0:
+            if key not in targets:
+                return "%s n'est pas dans ton plan." % key
+            if len(targets) == 1:
+                return "❌ Il faut garder au moins une ligne (ou mets /regler budget_etf 0)."
+            targets.pop(key)
+        else:
+            targets[key] = w
+        try:
+            config_mod.update_file(e.cfg_path, "stocks.targets", targets)
+            e.reload_config()
+        except config_mod.ConfigError as ex:
+            return "❌ %s" % ex
+        e.log("info", "Plan actions modifié : %s" % targets)
+        return "✅ Plan actions : " + " · ".join("%s %g" % (k.split(".")[0], v) for k, v in targets.items())
 
     # --------------------------------------------------------- clés et dépôt
     def key_info(self):

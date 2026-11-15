@@ -33,13 +33,17 @@ class FakeMarket:
     def __init__(self):
         self.prices = dict(BASE_PRICES)
         self.avg = dict(BASE_PRICES)
+        self.history = {}   # séries longues pour le radar
+        self.volumes = {}
+        self.extra_pairs = []
 
     def symbol(self, a):
         return a + "-EUR"
 
     def pairs(self):
         return {self.symbol(a): {"base": a, "quote": "EUR", "base_step": "0.00000001", "quote_step": "0.01",
-                                 "min_order_size": "0.00000001", "min_order_size_quote": "1"} for a in BASE_PRICES}
+                                 "min_order_size": "0.00000001", "min_order_size_quote": "1"}
+                for a in list(BASE_PRICES) + self.extra_pairs}
 
     def pair_info(self, a):
         return self.pairs()[self.symbol(a)]
@@ -48,7 +52,45 @@ class FakeMarket:
         return {a: {"bid": self.prices[a], "ask": self.prices[a], "last": self.prices[a]} for a in assets}
 
     def daily_closes(self, a, days=30):
+        if days > 60 and a in self.history:
+            return self.history[a]
         return [self.avg[a]] * days
+
+    def all_tickers(self):
+        out = {a: {"bid": p, "ask": p, "last": p, "volume": 1e9 / p} for a, p in self.prices.items()}
+        for a, h in self.history.items():
+            out.setdefault(a, {"bid": h[-1], "ask": h[-1], "last": h[-1], "volume": self.volumes.get(a, 1e9 / h[-1])})
+        return out
+
+
+def series(kind, n=365, start=100.0):
+    """Séries de prix synthétiques pour tester le radar."""
+    out, p = [], start
+    for i in range(n):
+        if kind == "up_pullback":
+            p *= 1.004 if i < n - 12 else 0.991
+        elif kind == "down":
+            p *= 0.995
+        elif kind == "hot":
+            p *= 1.002 if i < n - 20 else 1.012
+        else:
+            p *= 1.0 + (0.001 if i % 2 else -0.001)
+        out.append(p)
+    return out
+
+
+class FakeStocks:
+    pause = 0
+
+    def __init__(self, data=None, fail=False):
+        self.data = data or {}
+        self.fail = fail
+
+    def closes(self, ticker):
+        from microinvest.broker import BrokerError
+        if self.fail or ticker not in self.data:
+            raise BrokerError("indisponible")
+        return self.data[ticker], "EUR"
 
 
 class FakeNotifier:
@@ -91,8 +133,15 @@ class Base(unittest.TestCase):
         self.notifier = FakeNotifier()
         self.clock = Clock(monday_10h05())
         self.e = Engine(cfg, self.cfg_path, self.dir, market=self.market, notifier=self.notifier, clock=self.clock)
+        from microinvest.radar import Radar
+        self.stocks = FakeStocks()
+        self.e.radar = Radar(self.e, stocks=self.stocks, clock=self.clock)
+        self.e.cfg["radar"]["enabled"] = False  # activé seulement dans TestRadar
 
     def tearDown(self):
+        r = getattr(self.e, "radar", None)
+        if r is not None:  # attend la fin d'une analyse en arrière-plan avant d'effacer le dossier
+            r.running.acquire(timeout=10)
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def eur_balance(self):
@@ -293,7 +342,7 @@ class TestSchedule(Base):
         self.e.tick()
         pend = [a for a in self.e.store.pending_approvals() if a["kind"] == "etf"]
         self.assertEqual(len(pend), 1)
-        self.assertIn("IWDA", pend[0]["text"])
+        self.assertIn("iShares Core MSCI World", pend[0]["text"])
         self.e.tick()
         self.assertEqual(len([a for a in self.e.store.pending_approvals() if a["kind"] == "etf"]), 1)
         self.e.resolve_approval(pend[0]["id"], True)
@@ -537,6 +586,144 @@ class TestRevolutXClient(unittest.TestCase):
         q, e = broker_mod.normalize_fill({"qty": 1.0, "cost": 10, "fee": 0.01, "fee_currency": "SOL"}, "SOL", "buy")
         self.assertAlmostEqual(q, 0.99)
         self.assertAlmostEqual(e, 10)
+
+
+class TestRadar(Base):
+    def setUp(self):
+        super().setUp()
+        m = self.market
+        m.extra_pairs = ["DOGE", "USDC", "TINY", "DOWN"]
+        m.history = {"BTC": series("up_pullback", start=40000), "DOGE": series("up_pullback", start=0.1),
+                     "USDC": series("flat", start=1.0), "TINY": series("up_pullback", start=1.0),
+                     "DOWN": series("down", start=10.0), "ETH": series("hot", start=2000)}
+        m.volumes = {"TINY": 10.0}
+        self.e.cfg["radar"]["enabled"] = True
+        self.stocks.data = {"IWDA.AS": series("up_pullback", start=80), "NVDA": series("hot", start=100),
+                            "TSLA": series("down", start=300)}
+
+    def test_indicators_and_scores(self):
+        from microinvest.radar import indicators, score
+        s1, l1, r1 = score(indicators(series("up_pullback")), "crypto")
+        s2, l2, r2 = score(indicators(series("down")), "crypto")
+        s3, l3, r3 = score(indicators(series("hot")), "crypto")
+        self.assertGreater(s1, s2)
+        self.assertGreater(s1, s3)
+        self.assertEqual(l2, "⛔ À éviter")
+        self.assertTrue(any("point d'entrée" in r for r in r1))
+        self.assertTrue(any("surchauffe" in r for r in r3))
+        self.assertIsNone(indicators([1.0] * 10))  # trop peu d'historique
+
+    def test_full_scan(self):
+        data = self.e.get_radar().run()
+        syms = [r["symbol"] for r in data["crypto"]]
+        self.assertNotIn("USDC", syms)                       # stablecoin écarté
+        self.assertIn("DOGE", syms)
+        tiny = [r for r in data["crypto"] if r["symbol"] == "TINY"][0]
+        self.assertEqual(tiny["label"], "💧 Peu liquide")
+        self.assertLessEqual(tiny["score"], 40)
+        self.assertEqual([r["symbol"] for r in data["stocks"]][0], "IWDA.AS")
+        self.assertEqual(len(data["stocks"]), 3)              # les autres : cours indisponibles, ignorés
+        txt = self.e.get_radar().summary_text(data)
+        self.assertIn("DOGE", txt)
+        self.assertIn("DOWN", txt)                            # dans la liste « à éviter »
+        self.assertIn("pas une prédiction", txt)
+        btn = [b[1] for row in self.e.get_radar().summary_buttons(data) for b in row]
+        self.assertIn("add:c:DOGE", btn)
+        self.assertNotIn("add:c:BTC", btn)                    # déjà dans le plan
+        self.assertNotIn("add:s:IWDA.AS", btn)
+        info, r = self.e.get_radar().info_text(data, "doge")
+        self.assertIn("Note", info)
+        info, r = self.e.get_radar().info_text(data, "NVDA")
+        self.assertIn("Nvidia", info)
+        st = self.e.state()["radar"]
+        self.assertEqual(st["n_stocks"], 3)
+        json.dumps(st)
+
+    def test_scan_survives_stock_outage(self):
+        self.stocks.fail = True
+        data = self.e.get_radar().run()
+        self.assertEqual(data["stocks"], [])
+        self.assertIn("indisponibles", self.e.get_radar().summary_text(data))
+
+    def test_daily_radar_in_tick(self):
+        self.e.tick()
+        for _ in range(100):
+            if self.e.store.get("radar"):
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(self.e.store.get("radar"))
+
+    def test_telegram_radar_and_add(self):
+        sent = []
+        bot = TelegramBot("T", "42", self.e, api=lambda t, m, p=None, timeout=20: sent.append((m, p)) or {"message_id": 1},
+                          base_dir=self.dir)
+        self.e.notifier = bot
+        click = lambda d: bot.handle({"update_id": 2, "callback_query": {"id": "c", "data": d, "message": {"chat": {"id": 42}}}})
+        texts = lambda: [p.get("text", "") for m, p in sent if m == "sendMessage"]
+        bot.handle({"update_id": 1, "message": {"chat": {"id": 42}, "text": "/radar"}})
+        self.assertIn("lancée", texts()[-1])
+        for _ in range(100):
+            if self.e.store.get("radar"):
+                break
+            time.sleep(0.02)
+        time.sleep(0.1)
+        self.assertTrue(any("🔭 Radar du" in t for t in texts()))
+        click("add:c:DOGE")
+        self.assertIn("Ajouter DOGE", texts()[-1])
+        click("addok:c:DOGE:7.5")
+        self.assertEqual(self.e.cfg["dca"]["targets"]["DOGE"], 7.5)
+        click("add:s:NVDA")
+        click("addok:s:NVDA:20")
+        self.assertEqual(self.e.stock_targets(), {"IWDA.AS": 100, "NVDA": 20.0})
+        bot.handle({"update_id": 3, "message": {"chat": {"id": 42}, "text": "/radar crypto"}})
+        self.assertIn("Classement crypto", texts()[-1])
+        bot.handle({"update_id": 4, "message": {"chat": {"id": 42}, "text": "/info DOWN"}})
+        self.assertIn("À éviter", texts()[-1])
+        bot.handle({"update_id": 5, "message": {"chat": {"id": 42}, "text": "/actions"}})
+        self.assertIn("Nvidia", texts()[-1])
+        bot.handle({"update_id": 6, "message": {"chat": {"id": 42}, "text": "/cible_action NVDA 0"}})
+        self.assertEqual(self.e.stock_targets(), {"IWDA.AS": 100})
+        bot.handle({"update_id": 7, "message": {"chat": {"id": 42}, "text": "/cible_action XYZ 10"}})
+        self.assertIn("pas dans la liste", texts()[-1])
+
+
+class TestStockPlan(Base):
+    def test_default_single_line(self):
+        self.assertEqual(self.e.stock_plan(), [["IWDA.AS", 15]])
+
+    def test_multi_lines_rotation(self):
+        self.e.cfg["stocks"]["targets"] = {"IWDA.AS": 60, "NVDA": 20, "MC.PA": 20}
+        plan = self.e.stock_plan()
+        self.assertAlmostEqual(sum(a for _, a in plan), 15)
+        self.assertTrue(all(a >= 5 for _, a in plan))
+        self.assertLessEqual(len(plan), 3)
+        self.assertEqual(plan[0][0], "IWDA.AS")
+        self.e.record_etf(15, plan)
+        for _ in range(5):  # sur plusieurs mois, chaque ligne converge vers sa cible
+            p = self.e.stock_plan()
+            self.e.record_etf(sum(a for _, a in p), p)
+        inv = self.e.stock_invested()
+        total = sum(inv.values())
+        self.assertAlmostEqual(total, 90)
+        self.assertAlmostEqual(inv["IWDA.AS"] / total, 0.6, delta=0.08)
+        self.assertGreater(inv.get("NVDA", 0), 10)
+        self.assertGreater(inv.get("MC.PA", 0), 10)
+
+    def test_monthly_prompt_lists_lines_and_records_them(self):
+        self.e.cfg["stocks"]["targets"] = {"IWDA.AS": 50, "NVDA": 50}
+        self.clock.t = time.mktime((2026, 11, 5, 18, 10, 0, 0, 0, -1))
+        self.e.tick()
+        a = [x for x in self.e.store.pending_approvals() if x["kind"] == "etf"][0]
+        self.assertIn("Nvidia", a["text"])
+        self.assertIn("iShares Core MSCI World", a["text"])
+        self.e.resolve_approval(a["id"], True)
+        inv = self.e.stock_invested()
+        self.assertEqual(set(inv), {"IWDA.AS", "NVDA"})
+        self.assertAlmostEqual(sum(inv.values()), 15)
+
+    def test_legacy_etf_trades_count_for_main_line(self):
+        self.e.store.add_trade("ETF", "buy", 0, 15, 0, "ancien", kind="etf")
+        self.assertEqual(self.e.stock_invested(), {"IWDA.AS": 15})
 
 
 PROJECT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")

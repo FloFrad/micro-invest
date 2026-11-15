@@ -120,6 +120,20 @@ class MarketData:
                 }
         return out
 
+    def all_tickers(self):
+        """Prix et volume 24 h de toutes les paires en euros (une seule requête)."""
+        data = _http("GET", BASE_URL + "/api/1.0/public/tickers")
+        out = {}
+        for t in (data or {}).get("data", []):
+            parts = t.get("symbol", "").replace("-", "/").split("/")
+            if len(parts) == 2 and parts[1] == self.quote:
+                out[parts[0]] = {
+                    "bid": float(t.get("bid") or 0), "ask": float(t.get("ask") or 0),
+                    "last": float(t.get("last_price") or t.get("mid") or 0),
+                    "volume": float(t.get("volume_24h") or 0),
+                }
+        return out
+
     def daily_closes(self, asset, days=30):
         """Clôtures journalières (cache 6 h)."""
         key = (asset, days)

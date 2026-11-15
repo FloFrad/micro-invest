@@ -99,6 +99,12 @@ class Engine:
             config_mod.save(self.cfg_path, raw)
             self.log("info", "Mode changé : %s" % self.mode_label())
 
+    def get_radar(self):
+        if getattr(self, "radar", None) is None:
+            from .radar import Radar
+            self.radar = Radar(self, clock=self.clock)
+        return self.radar
+
     def reload_config(self):
         """Relit config.json et applique les réglages sans redémarrer (le mode actuel est conservé)."""
         with self.lock:
@@ -340,8 +346,8 @@ class Engine:
             o = self.sell(p["asset"], p["fraction_pct"], p["reason"])
             return "Vente exécutée." if o else "Vente annulée (voir message)."
         if a["kind"] == "etf":
-            self.record_etf(p["amount"])
-            return "Achat ETF enregistré."
+            self.record_etf(p["amount"], p.get("lines"))
+            return "Achat actions/ETF enregistré."
         return "OK"
 
     def expire_approvals(self):
@@ -479,30 +485,85 @@ class Engine:
             break
 
     # ------------------------------------------------------------------- ETF
+    # ------------------------------------------------------ plan actions/ETF
+    def stock_targets(self):
+        return dict(self.cfg["stocks"]["targets"])
+
+    def stock_label(self, ticker):
+        from .radar import STOCK_INFO
+        i = STOCK_INFO.get(ticker)
+        if i:
+            return "%s (cherche « %s »)" % (i["name"], i["search"])
+        return ticker
+
+    def stock_invested(self):
+        """Montant investi par ligne du plan actions (anciens achats « ETF » rattachés à la ligne principale)."""
+        targets = self.stock_targets()
+        main = max(targets, key=lambda k: targets[k]) if targets else "ETF"
+        out = {}
+        for t in self.store.trades(100000, kind="etf"):
+            k = main if t["asset"] == "ETF" else t["asset"]
+            out[k] = out.get(k, 0.0) + t["eur"]
+        return out
+
+    def stock_plan(self, budget=None):
+        """Répartit le budget du mois entre les lignes les plus en retard sur leur cible.
+
+        Au maximum `max_lines` lignes, chacune d'au moins `min_line_eur` (sinon trop de petits ordres)."""
+        sc = self.cfg["stocks"]
+        budget = self.cfg["budget"]["monthly_etf_eur"] if budget is None else budget
+        targets = self.stock_targets()
+        if budget <= 0 or not targets:
+            return []
+        inv = self.stock_invested()
+        tsum = float(sum(targets.values()))
+        total_after = sum(inv.get(k, 0.0) for k in targets) + budget
+        deficits = sorted(((targets[k] / tsum * total_after - inv.get(k, 0.0), k) for k in targets), reverse=True)
+        lines, left = [], budget
+        for d, k in deficits:
+            if len(lines) >= sc["max_lines"] or left < sc["min_line_eur"] - 1e-9:
+                break
+            amt = max(sc["min_line_eur"], min(d, left))
+            amt = round(min(amt, left), 2)
+            lines.append([k, amt])
+            left = round(left - amt, 2)
+        if left > 0 and lines:  # le reste va à la ligne la plus en retard
+            lines[0][1] = round(lines[0][1] + left, 2)
+        return lines
+
     def etf_prompt(self):
-        e, amt = self.cfg["etf"], self.cfg["budget"]["monthly_etf_eur"]
+        lines = self.stock_plan()
+        if not lines:
+            return
+        total = round(sum(a for _, a in lines), 2)
         self.store.set("etf_month", month_key(self.clock()))
         self.store.set("etf_reminded", False)
-        self.request_approval("etf", {"asset": "ETF", "amount": amt},
-                              "📈 Achat ETF du mois (semi-auto)\n"
+        detail = "\n".join("   • %s : %s" % (self.stock_label(k), eur(a)) for k, a in lines)
+        self.request_approval("etf", {"asset": "ETF", "amount": total, "lines": lines},
+                              "📈 Achats actions/ETF du mois (semi-auto) — total %s\n"
                               "1. Ouvre l'appli Revolut → Investir\n"
-                              "2. Cherche : %s\n"
-                              "3. Acheter → %s → Confirmer\n"
-                              "4. Reviens ici et appuie sur « Fait »\n"
-                              "(Autre montant ? Envoie /etf 12.50)" % (e["name"], eur(amt)), hours=72)
+                              "2. Achète :\n%s\n"
+                              "3. Reviens ici et appuie sur « Fait »\n"
+                              "(Autre montant ? Envoie /etf 12.50)" % (eur(total), detail), hours=72)
 
-    def record_etf(self, amount):
-        self.store.add_trade("ETF", "buy", 0, float(amount), 0, self.cfg["etf"]["name"], kind="etf")
+    def record_etf(self, amount, lines=None):
+        if not lines:
+            targets = self.stock_targets()
+            main = max(targets, key=lambda k: targets[k]) if targets else "ETF"
+            lines = [[main, float(amount)]]
+        for k, a in lines:
+            self.store.add_trade(k, "buy", 0, float(a), 0, self.stock_label(k), kind="etf")
+        amount = sum(a for _, a in lines)
         for a in self.store.pending_approvals():
             if a["kind"] == "etf":
                 self.store.claim_approval(a["id"], "approved")
         bs = self.budget_status()
         warn = ""
         if bs["etf_spent"] > bs["etf_monthly"] + 1e-9:
-            warn = "\n⚠️ Au-dessus du budget ETF du mois (%s)." % eur(bs["etf_monthly"])
-        self.log("info", "Achat ETF enregistré : %s" % eur(amount))
-        self.notify("✅ Achat ETF de %s enregistré.%s\n\nQuestion : quelle est la valeur totale actuelle de ta ligne "
-                    "ETF dans Revolut ? Réponds par exemple : /etfvaleur 123.45" % (eur(amount), warn))
+            warn = "\n⚠️ Au-dessus du budget actions du mois (%s)." % eur(bs["etf_monthly"])
+        self.log("info", "Achat actions/ETF enregistré : %s" % eur(amount))
+        self.notify("✅ Achat actions/ETF de %s enregistré.%s\n\nQuestion : quelle est la valeur totale actuelle de tes "
+                    "actions/ETF dans Revolut ? Réponds par exemple : /etfvaleur 123.45" % (eur(amount), warn))
 
     def set_etf_value(self, value):
         self.store.set("etf_value", {"value": float(value), "ts": self.clock()})
@@ -569,11 +630,21 @@ class Engine:
                         self.store.set("etf_reminded", True)
                         self.notify("⏰ Rappel : l'achat ETF du mois attend toujours (message ci-dessus).")
 
+        # Radar quotidien (en arrière-plan : 2 à 4 min)
+        r = self.cfg["radar"]
+        day = time.strftime("%Y-%m-%d", t)
+        if r["enabled"] and t.tm_hour >= r["hour"] and self.store.get("radar_day") != day:
+            self.store.set("radar_day", day)
+            self.get_radar().run_async(notify=False)
+
         # Rapport hebdomadaire
         w = self.cfg["weekly_report"]
         if t.tm_wday == w["weekday"] and t.tm_hour >= w["hour"] and self.store.get("report_week") != week:
             self.store.set("report_week", week)
             self.notify("🗓 Rapport de la semaine\n\n" + self.status_text())
+            rd = self.get_radar().latest()
+            if r["enabled"] and rd:
+                self.notify(self.get_radar().summary_text(rd), self.get_radar().summary_buttons(rd))
 
     # ---------------------------------------------------------------- textes
     def status_text(self):
@@ -611,9 +682,14 @@ class Engine:
             lines.append("%s | %s | %s | %.0f %% / %.0f %%" % (
                 r["asset"], eur(r["value"]), pct(r["pnl_pct"]) if r["cost"] else "—", r["weight_pct"], r["target_pct"]))
         lines.append("Total : %s (%s)" % (eur(pf["value"]), pct(pf["pnl_pct"])))
+        inv = self.stock_invested()
+        if inv:
+            lines.append("\nActions/ETF (achats manuels) :")
+            for k, v in sorted(inv.items(), key=lambda kv: -kv[1]):
+                lines.append("%s | %s investis" % (k, eur(v)))
         ev = self.store.get("etf_value")
         if ev:
-            lines.append("ETF (déclaré) : %s" % eur(ev["value"]))
+            lines.append("Valeur actions/ETF déclarée : %s" % eur(ev["value"]))
         return "\n".join(lines)
 
     def history_text(self, n=10):
@@ -628,6 +704,17 @@ class Engine:
             else:
                 out.append("%s %s %s %s (%s)" % (d, "Achat" if t["side"] == "buy" else "Vente", t["asset"], eur(t["eur"]), t["reason"][:40]))
         return "\n".join(out)
+
+    def _radar_state(self):
+        from .radar import key_reason
+        rd = self.store.get("radar")
+        if not rd:
+            return None
+        slim = lambda rows: [{"symbol": r["symbol"], "name": r["name"], "score": r["score"], "label": r["label"],
+                              "reason": key_reason(r), "kind": r["kind"],
+                              "r90": r["ind"]["r90"], "vol": r["ind"]["vol"]} for r in rows[:12]]
+        return {"ts": rd["ts"], "crypto": slim(rd["crypto"]), "stocks": slim(rd["stocks"]),
+                "n_crypto": len(rd["crypto"]), "n_stocks": len(rd["stocks"])}
 
     def state(self):
         """Toutes les données pour l'interface web."""
@@ -647,8 +734,10 @@ class Engine:
             "events": self.store.events(20),
             "snapshots": self.store.snapshots(self.clock() - 90 * 86400),
             "next_dca": self.next_dca_ts(),
-            "etf": {"name": self.cfg["etf"]["name"], "value": self.store.get("etf_value"),
-                    "invested": sum(t["eur"] for t in self.store.trades(10000, kind="etf"))},
+            "etf": {"name": ", ".join(self.stock_targets()), "value": self.store.get("etf_value"),
+                    "invested": sum(t["eur"] for t in self.store.trades(10000, kind="etf")),
+                    "targets": self.stock_targets(), "by_line": self.stock_invested()},
+            "radar": self._radar_state(),
             "config": {
                 "budget": self.cfg["budget"], "targets": self.cfg["dca"]["targets"],
                 "dca_day": JOURS[self.cfg["dca"]["weekday"]], "dca_hour": self.cfg["dca"]["hour"],

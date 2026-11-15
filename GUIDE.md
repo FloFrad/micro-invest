@@ -23,7 +23,8 @@ Les phases 1 à 6 se font **sans argent réel** (mode simulation). Le réel arri
 - **Si une crypto a baissé de 10 % ou plus** par rapport à sa moyenne sur 30 jours : il propose d'en acheter le double (≈ 16 €). Il te demande d'abord sur Telegram, parce que ça dépasse 10 €.
 - **Forte baisse (15 % ou plus)** : il te demande si tu veux faire un achat en plus.
 - **Prise de bénéfices** : si une crypto monte à +40 % au-dessus de ton prix moyen, il te propose d'en vendre 25 %. Il ne vend jamais sans ton « Oui ».
-- **ETF (actions) le 5 de chaque mois** : Revolut n'a pas d'API pour les actions. Le bot t'envoie donc un message à 18 h : « achète 15 € d'IWDA dans l'appli ». Tu le fais en 30 secondes, puis tu appuies sur **Fait**.
+- **Actions/ETF le 5 de chaque mois** : Revolut n'a pas d'API pour les actions. Le bot t'envoie donc à 18 h la liste à acheter dans l'appli (par défaut 15 € d'IWDA). Tu le fais en 1 minute, puis tu appuies sur **Fait**.
+- **Radar chaque matin** : il note toutes les cryptos de Revolut X et une trentaine d'actions/ETF, et te propose d'ajouter les mieux notées en un clic.
 - **Chaque dimanche à 19 h** : il t'envoie un rapport sur Telegram.
 - **Tout se pilote depuis Telegram** avec des boutons : achats, pause, réglages, clé Revolut X, mises à jour. L'interface web ne sert qu'à consulter, et seulement depuis le Wi-Fi de la maison.
 
@@ -203,7 +204,7 @@ En bas de l'écran (toujours visibles) :
 | 🛒 Acheter | Fait l'achat de la semaine maintenant (avec confirmation) |
 | ❓ Questions | Réaffiche les questions en attente |
 | ⏸ Pause / ▶️ Reprendre | Suspend ou relance les achats automatiques |
-| ⚙️ Menu | Tout le reste : historique, journal, ETF, budget, réglages, mode, mise à jour, version précédente, redémarrer, interface web, clé Revolut X |
+| ⚙️ Menu | Tout le reste : 🔭 Radar, plan actions, historique, journal, budget, réglages, mode, mise à jour, version précédente, redémarrer, interface web, clé Revolut X |
 
 Si les boutons ont disparu, envoie `/start`.
 
@@ -245,16 +246,41 @@ Ce qui n'est jamais modifié par une mise à jour : `config.json`, `keys/`, `dat
 
 ---
 
-## L'ETF chaque mois (30 secondes)
+## Le Radar : quelles cryptos et actions regarder (30 secondes)
 
-Le 5 du mois à 18 h, le bot t'envoie :
-1. Ouvre l'appli Revolut → *Investir*.
-2. Cherche **IWDA** (iShares Core MSCI World).
-3. *Acheter* → 15 € → *Confirmer*.
-4. Reviens sur Telegram → **✅ Fait**.
-5. Le bot te demande ensuite la valeur totale de ta ligne ETF : réponds `/etfvaleur 123.45`.
+Chaque matin à 7 h, le Radar analyse **toutes les cryptos échangeables en euros sur Revolut X** et **une trentaine d'actions et d'ETF** disponibles chez Revolut : les grands ETF (Monde, S&P 500, Nasdaq, émergents, Europe), les géants US (Apple, Microsoft, Nvidia…) et les grandes valeurs européennes (ASML, LVMH, Airbus…).
 
-Sans réponse au bout de 24 h, il te le rappelle une fois. Tu peux aussi passer par **⚙️ Menu** → **📈 ETF du mois** à tout moment.
+1. **⚙️ Menu** → **🔭 Radar** : les 5 cryptos et les 5 actions/ETF les mieux notées, avec la raison principale de chaque note.
+2. Sous le message, **➕ SYMBOLE** ajoute un actif à ton plan (une confirmation est demandée).
+3. **🪙 Classement crypto** / **📈 Classement actions** : le classement complet.
+4. `/info SOL` : l'analyse détaillée d'un actif (prix, 30 j, 90 j, plus haut sur 1 an, volatilité).
+
+**Comment la note sur 100 est calculée** (aucune prédiction, que des règles vérifiables) :
+
+| Critère | Points | Idée |
+|---|---|---|
+| Tendance | 40 | Prix au-dessus de sa moyenne sur 200 jours, et la moyenne 50 j au-dessus de la moyenne 200 j |
+| Élan | 20 | Performance sur 90 jours |
+| Point d'entrée | 25 | Repli de 3 à 15 % sous la moyenne 30 j dans une tendance haussière (« acheter la baisse d'un actif qui monte ») |
+| Risque | 15 | Plus l'actif est calme (volatilité faible), plus il a de points |
+
+Étiquettes : ⭐ Intéressant (65 et plus) · 👀 À surveiller (45 à 64) · 😐 Neutre · ⛔ À éviter (forte baisse, tendance cassée) · 💧 Peu liquide (trop peu échangée, écartée).
+Les stablecoins (USDT, USDC…) sont ignorés. Le Radar ne fait **jamais** d'achat tout seul : il propose, et c'est toi qui décides.
+
+---
+
+## Le plan actions/ETF chaque mois (1 minute)
+
+Revolut n'a pas d'API pour les actions : cette partie reste manuelle, mais guidée.
+
+- Par défaut, le plan contient une seule ligne : **iShares Core MSCI World (IWDA)**.
+- Ajoute des lignes avec **➕** depuis le Radar, ou avec `/cible_action NVDA 20`. Pour en retirer une : `/cible_action NVDA 0`. Voir le plan : **⚙️ Menu** → **📈 Plan actions/ETF**.
+- Le 5 du mois à 18 h, le bot t'envoie la liste à acheter, avec un montant par ligne : au maximum 3 lignes de 5 € minimum, en priorité celles qui sont en retard sur leur cible.
+  1. Ouvre l'appli Revolut → *Investir*.
+  2. Achète chaque ligne indiquée (le nom à chercher est donné).
+  3. Reviens sur Telegram → **✅ Fait**.
+  4. Le bot te demande ensuite la valeur totale de tes actions/ETF : réponds `/etfvaleur 123.45`.
+- Sans réponse au bout de 24 h, il te le rappelle une fois.
 
 ---
 
@@ -266,7 +292,7 @@ Sans réponse au bout de 24 h, il te le rappelle une fois. Tu peux aussi passer 
 | Exemple | Effet |
 |---|---|
 | `/regler budget_crypto 40` | Budget crypto : 40 €/mois |
-| `/regler budget_etf 10` | Budget ETF : 10 €/mois |
+| `/regler budget_etf 10` | Budget actions/ETF : 10 €/mois |
 | `/regler max_ordre 20` | Plafond absolu par ordre |
 | `/regler validation_au_dela 10` | Au-delà, le bot demande ton accord |
 | `/regler reserve 20` | 20 € jamais utilisés sur Revolut X |
@@ -275,7 +301,8 @@ Sans réponse au bout de 24 h, il te le rappelle une fois. Tu peux aussi passer 
 | `/regler plafond_perte 25` | Perte (%) qui gèle les achats |
 | `/regler prise_benefices 40` | Gain (%) qui déclenche une proposition de vente |
 | `/regler prise_benefices_active non` | Plus aucune proposition de vente |
-| `/regler jour_etf 5` | Jour du rappel ETF |
+| `/regler jour_etf 5` | Jour du rappel actions/ETF |
+| `/regler radar_heure 7` | Heure de l'analyse quotidienne du Radar |
 | `/cible SOL 12` | Poids de SOL dans la répartition (`/cible SOL 0` pour la retirer) |
 
 Une valeur hors limites est refusée avec une explication, et rien n'est changé.

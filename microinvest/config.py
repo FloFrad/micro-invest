@@ -31,13 +31,15 @@ DEFAULTS = {
     "approval_timeout_hours": 12,
     "weekly_report": {"weekday": 6, "hour": 19},
     "update": {"repo": "", "branch": "main", "token": ""},
+    "stocks": {"targets": {"IWDA.AS": 100}, "min_line_eur": 5, "max_lines": 3},
+    "radar": {"enabled": True, "hour": 7},
 }
 
 
 def _merge(base, over):
     out = copy.deepcopy(base)
     for k, v in (over or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict) and k != "targets":
+        if isinstance(v, dict) and isinstance(out.get(k), dict) and k != "targets":  # les cibles se remplacent en bloc
             out[k] = _merge(out[k], v)
         else:
             out[k] = v
@@ -73,6 +75,13 @@ def validate(c):
         errs.append("safety.max_drawdown_pct : entre 1 et 90")
     if not 1 <= c["etf"]["day_of_month"] <= 28:
         errs.append("etf.day_of_month : entre 1 et 28")
+    st = c["stocks"]["targets"]
+    if any((not isinstance(v, (int, float)) or v <= 0) for v in st.values()):
+        errs.append("stocks.targets : chaque poids doit être > 0")
+    if not 1 <= c["stocks"]["max_lines"] <= 10:
+        errs.append("stocks.max_lines : entre 1 et 10")
+    if not 0 <= c["radar"]["hour"] <= 23:
+        errs.append("radar.hour : 0 à 23")
     repo = (c.get("update") or {}).get("repo", "")
     if repo and (repo.count("/") != 1 or " " in repo):
         errs.append('update.repo doit avoir la forme "proprietaire/nom-du-depot"')
