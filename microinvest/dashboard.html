@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Micro-invest</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#fff;--ink:#16181d;--muted:#667085;--line:#e4e7ec;
+  --accent:#3b5bdb;--good:#1f8a4c;--bad:#c92a2a;--warn:#b7791f;--chip:#eef1f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#0f1115;--card:#171a21;--ink:#e8eaee;--muted:#98a2b3;--line:#272c36;
+    --accent:#7c93ff;--good:#4cc38a;--bad:#ff6b6b;--warn:#f0b54a;--chip:#222733;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:16px}
+h1{font-size:20px;margin:0}
+h2{font-size:15px;margin:0 0 12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.chip{display:inline-block;padding:3px 10px;border-radius:99px;background:var(--chip);font-size:13px;font-weight:600}
+.chip.good{color:var(--good)}.chip.bad{color:var(--bad)}.chip.warn{color:var(--warn)}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
+.kpi .v{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+.kpi .l{color:var(--muted);font-size:13px}
+.pos{color:var(--good)}.neg{color:var(--bad)}
+.bar{height:8px;background:var(--chip);border-radius:99px;overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;background:var(--accent)}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;font-size:13px}
+.scroll{overflow-x:auto}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:8px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+input{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:110px}
+.ask{border-left:4px solid var(--warn)}
+.ask pre{white-space:pre-wrap;font:inherit;margin:0 0 10px}
+.muted{color:var(--muted);font-size:13px}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:90vw}
+svg text{fill:var(--muted);font-size:11px}
+.two{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.two .card{margin-bottom:0}
+.wbar{display:inline-block;width:70px;height:6px;background:var(--chip);border-radius:9px;position:relative;vertical-align:middle;margin-left:6px}
+.wbar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:9px}
+.wbar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Micro-invest</h1>
+    <div class="actions"><span id="mode" class="chip">…</span><span id="etat" class="chip">…</span><span id="upd" class="muted"></span></div>
+  </header>
+
+  <div id="asks"></div>
+
+  <div class="grid">
+    <div class="card kpi"><div class="l">Valeur crypto</div><div class="v" id="k-val">—</div><div class="muted" id="k-cost"></div></div>
+    <div class="card kpi"><div class="l">Gain / perte</div><div class="v" id="k-pnl">—</div><div class="muted" id="k-dd"></div></div>
+    <div class="card kpi"><div class="l">Budget crypto du mois</div><div class="v" id="k-bud">—</div><div class="bar"><i id="k-budbar" style="width:0"></i></div></div>
+    <div class="card kpi"><div class="l">Solde EUR sur Revolut X</div><div class="v" id="k-eur">—</div><div class="muted" id="k-next"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Actions</h2>
+    <div class="actions">
+      <button id="b-pause">⏸ Pause</button>
+      <button id="b-dca" class="primary">Acheter la part de la semaine maintenant</button>
+      <span class="muted">|</span>
+      <span>ETF acheté :</span><input id="i-etf" type="number" step="0.01" min="0" placeholder="15.00"><button id="b-etf">Déclarer</button>
+      <span>Valeur ETF :</span><input id="i-etfv" type="number" step="0.01" min="0" placeholder="230.50"><button id="b-etfv">Mettre à jour</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Évolution (90 jours)</h2>
+    <div id="chart" class="muted">Pas encore de données : la courbe apparaît après le premier achat.</div>
+  </div>
+
+  <div class="card">
+    <h2>Positions crypto</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Actif</th><th>Quantité</th><th>Prix moyen</th><th>Prix actuel</th><th>Valeur</th><th>Gain</th><th>Poids / cible</th></tr></thead>
+      <tbody id="t-pos"></tbody>
+    </table></div>
+    <p class="muted" id="etfline"></p>
+  </div>
+
+  <div class="two">
+    <div class="card"><h2>Dernières opérations</h2><div class="scroll"><table><tbody id="t-tr"></tbody></table></div></div>
+    <div class="card"><h2>Journal</h2><div class="scroll"><table><tbody id="t-ev"></tbody></table></div></div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h2>Règles actives</h2>
+    <div id="rules" class="muted"></div>
+    <p class="muted">Pour modifier : bouton « ⚙️ Menu » → « 🔧 Réglages » sur Telegram.</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const eur = x => (x ?? 0).toLocaleString("fr-FR",{style:"currency",currency:"EUR"});
+const pct = x => (x>=0?"+":"") + (x ?? 0).toLocaleString("fr-FR",{maximumFractionDigits:1}) + " %";
+const dt = ts => new Date(ts*1000).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+let S = null;
+
+function toast(m){const t=$("toast");t.textContent=m;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",4000);}
+
+async function post(path, body){
+  try{
+    const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-Requested-With":"microinvest"},body:JSON.stringify(body||{})});
+    const j = await r.json(); toast(j.message || j.error || "OK");
+  }catch(e){toast("Erreur : "+e);}
+  load();
+}
+
+function chart(snaps){
+  if(!snaps || snaps.length < 2) return;
+  const W=1000,H=220,P=36;
+  const xs=snaps.map(s=>s.ts), ys=snaps.flatMap(s=>[s.value,s.cost]);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys)*0.97,y1=Math.max(...ys)*1.03;
+  const X=t=>P+(t-x0)/(x1-x0||1)*(W-2*P), Y=v=>H-P+(-(v-y0)/(y1-y0||1))*(H-2*P);
+  const line=k=>snaps.map((s,i)=>(i?"L":"M")+X(s.ts).toFixed(1)+","+Y(s[k]).toFixed(1)).join("");
+  $("chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Valeur du portefeuille et montant investi">
+    <path d="${line("cost")}" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="2" stroke-dasharray="6 5"/>
+    <path d="${line("value")}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+    <text x="${P}" y="14">${eur(y1)}</text><text x="${P}" y="${H-8}">${eur(y0)}</text>
+    <text x="${W-P}" y="${H-8}" text-anchor="end">${dt(x1)}</text>
+  </svg><div class="muted">— valeur &nbsp; ┄ montant investi</div>`;
+}
+
+function render(s){
+  S=s;
+  $("mode").textContent = s.mode==="live" ? "RÉEL" : "SIMULATION";
+  $("mode").className = "chip " + (s.mode==="live" ? "warn" : "");
+  const etat = s.frozen ? ["Gelé (plafond de perte)","bad"] : s.paused ? ["En pause","warn"] : ["Actif","good"];
+  $("etat").textContent = etat[0]; $("etat").className = "chip "+etat[1];
+  $("upd").textContent = "maj " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+
+  const pf=s.portfolio, b=s.budget;
+  $("k-val").textContent = eur(pf.value);
+  $("k-cost").textContent = "investi : " + eur(pf.cost) + (pf.realized ? " · gains encaissés : "+eur(pf.realized) : "");
+  $("k-pnl").textContent = pf.cost ? pct(pf.pnl_pct) : "—";
+  $("k-pnl").className = "v " + (pf.pnl>=0 ? "pos" : "neg");
+  $("k-dd").textContent = "gel des achats à -" + s.config.max_drawdown_pct + " %";
+  $("k-bud").textContent = eur(b.spent) + " / " + eur(b.monthly);
+  $("k-budbar").style.width = Math.min(100, b.monthly ? b.spent/b.monthly*100 : 0) + "%";
+  $("k-eur").textContent = s.balances.erreur ? "illisible" : eur(s.balances.EUR || 0);
+  $("k-next").textContent = "prochain achat : " + dt(s.next_dca);
+
+  $("b-pause").textContent = s.paused ? "▶️ Reprendre" : "⏸ Pause";
+  $("b-pause").onclick = () => post(s.paused ? "/api/resume" : "/api/pause");
+
+  let asks = s.approvals.map(a => `<div class="card ask"><h2>Question en attente</h2><pre>${esc(a.text)}</pre>
+    <div class="actions"><button class="primary" onclick="post('/api/approve/${a.id}')">${a.kind==="etf"?"✅ Fait":"✅ Oui"}</button>
+    <button onclick="post('/api/reject/${a.id}')">${a.kind==="etf"?"⏭ Sauter":"❌ Non"}</button>
+    <span class="muted">expire ${dt(a.expires)}</span></div></div>`).join("");
+  if(s.frozen) asks = `<div class="card ask"><h2>Achats gelés</h2><pre>Le plafond de perte de -${s.config.max_drawdown_pct} % est atteint. Aucun achat n'est fait, rien n'est vendu.</pre>
+    <button onclick="post('/api/resume_freeze')">Réactiver les achats quand même</button></div>` + asks;
+  $("asks").innerHTML = asks;
+
+  $("t-pos").innerHTML = pf.rows.map(r => `<tr><td><b>${esc(r.asset)}</b></td>
+    <td>${r.qty ? r.qty.toLocaleString("fr-FR",{maximumFractionDigits:8}) : "—"}</td>
+    <td>${r.avg ? eur(r.avg) : "—"}</td><td>${r.price ? eur(r.price) : "—"}</td><td>${eur(r.value)}</td>
+    <td class="${r.pnl_pct>=0?"pos":"neg"}">${r.cost ? pct(r.pnl_pct) : "—"}</td>
+    <td>${r.weight_pct.toFixed(0)} / ${r.target_pct.toFixed(0)} %<span class="wbar"><i style="width:${Math.min(100,r.weight_pct)}%"></i><b style="left:${Math.min(100,r.target_pct)}%"></b></span></td></tr>`).join("");
+
+  const e=s.etf;
+  $("etfline").textContent = "ETF " + e.name + " (semi-auto via l'appli Revolut) : " + eur(e.invested) + " investis" +
+    (e.value ? " · valeur déclarée " + eur(e.value.value) + " le " + dt(e.value.ts) : " · valeur pas encore déclarée") +
+    " · budget ETF du mois : " + eur(b.etf_spent) + " / " + eur(b.etf_monthly);
+
+  $("t-tr").innerHTML = s.trades.length ? s.trades.map(t => `<tr><td>${dt(t.ts)}</td><td>${t.kind==="etf"?"ETF":esc(t.asset)}</td>
+    <td class="${t.side==="buy"?"":"pos"}">${t.side==="buy"?"Achat":"Vente"}</td><td>${eur(t.eur)}</td></tr>`).join("")
+    : `<tr><td class="muted">Aucune opération pour l'instant.</td></tr>`;
+  $("t-ev").innerHTML = s.events.map(ev => `<tr><td>${dt(ev.ts)}</td><td style="text-align:left;white-space:normal" class="${ev.level==="error"?"neg":""}">${esc(ev.text)}</td></tr>`).join("");
+
+  const c=s.config, tp=c.take_profit;
+  $("rules").innerHTML = [
+    `Achat automatique chaque <b>${esc(c.dca_day)}</b> à <b>${c.dca_hour}h</b> (≈ ${eur(b.weekly_base)}), plafonné à ${eur(c.budget.monthly_crypto_eur)}/mois crypto.`,
+    `Validation demandée au-delà de ${eur(c.budget.approval_above_eur)} par ordre · maximum absolu ${eur(c.budget.max_order_eur)} par ordre.`,
+    `Cibles : ` + Object.entries(c.targets).map(([k,v])=>esc(k)+" "+v).join(" · "),
+    `Gel de tous les achats si le portefeuille perd ${c.max_drawdown_pct} %.`,
+    tp.enabled ? `Prise de bénéfices proposée à +${tp.gain_pct} % (vente de ${tp.sell_fraction_pct} %), jamais sous ton prix moyen.` : `Prise de bénéfices désactivée.`,
+    `Jamais de levier, jamais d'achat au-delà du solde disponible.`
+  ].map(x=>"• "+x).join("<br>");
+
+  chart(s.snapshots);
+}
+
+async function load(){
+  try{ const r = await fetch("/api/state"); const s = await r.json(); if(s.error) throw s.error; render(s); }
+  catch(e){ $("upd").textContent = "erreur de chargement : " + e; }
+}
+$("b-dca").onclick = () => { if(confirm("Lancer l'achat de la semaine maintenant ?")) post("/api/dca_now"); };
+$("b-etf").onclick = () => { const v=parseFloat($("i-etf").value); if(v>0) post("/api/etf",{amount:v}); };
+$("b-etfv").onclick = () => { const v=parseFloat($("i-etfv").value); if(v>=0) post("/api/etf_value",{value:v}); };
+load(); setInterval(load, 30000);
+</script>
+</body>
+</html>

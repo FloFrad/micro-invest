@@ -1,0 +1,61 @@
+{
+  "mode": "paper",
+  "paper_start_eur": 100,
+  "quote": "EUR",
+  "revolutx": {
+    "api_key": "",
+    "private_key_file": "keys/private.pem"
+  },
+  "telegram": {
+    "token": "COLLE_ICI_LE_TOKEN_BOTFATHER",
+    "chat_id": ""
+  },
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8088,
+    "password": "change-moi"
+  },
+  "budget": {
+    "monthly_crypto_eur": 35,
+    "monthly_etf_eur": 15,
+    "max_order_eur": 20,
+    "approval_above_eur": 10,
+    "keep_reserve_eur": 0
+  },
+  "dca": {
+    "weekday": 0,
+    "hour": 10,
+    "targets": {
+      "BTC": 40,
+      "ETH": 25,
+      "SOL": 10,
+      "XRP": 10,
+      "ADA": 7.5,
+      "LINK": 7.5
+    },
+    "dip_threshold_pct": 10,
+    "dip_multiplier": 2.0,
+    "opportunity_threshold_pct": 15
+  },
+  "take_profit": {
+    "enabled": true,
+    "gain_pct": 40,
+    "sell_fraction_pct": 25,
+    "min_position_eur": 20
+  },
+  "safety": {
+    "max_drawdown_pct": 25,
+    "resume_above_pct": 15
+  },
+  "etf": {
+    "enabled": true,
+    "name": "iShares Core MSCI World (IWDA)",
+    "day_of_month": 5,
+    "hour": 18
+  },
+  "approval_timeout_hours": 12,
+  "weekly_report": {
+    "weekday": 6,
+    "hour": 19
+  }
+}
