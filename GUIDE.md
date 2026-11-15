@@ -308,6 +308,20 @@ Revolut n'a pas d'API pour les actions : cette partie reste manuelle, mais guid�
 - **🧾 Export fiscal** : `/export 2026` → 2 fichiers CSV (toutes les opérations, plus-values crypto selon la méthode du formulaire 2086) + le résumé (exonération sous 305 € de ventes, impôt estimé).
 - **🛟 Sauvegarde** : sauvegarde complète sur le NAS + copie **sans aucun secret** envoyée sur Telegram (ou téléchargeable sur le web).
 
+### Laboratoire : tester d'autres réglages sur le passé
+
+Web : onglet **Actions** → carte **Laboratoire**. Change le budget, le plafond par ordre, le seuil de baisse, le multiplicateur, la période (3, 6 ou 12 mois) ou les cibles, puis **🧪 Lancer le test**.
+- Chaque test s'ajoute au tableau de comparaison : la stratégie de l'outil avec ces réglages, face à un achat fixe.
+- **Appliquer** remplace tes réglages actuels par ceux du test (une confirmation est demandée).
+- Telegram : `/test budget=50 baisse=15 multi=1.5 cibles=BTC:60,ETH:40 mois=6`, puis `/tests` pour comparer.
+
+### Réajuster la simulation (jamais le réel)
+
+- **Remettre à zéro** : `/simulation reset 100` ou web, onglet **Actions** → carte **Simulation**. Les opérations simulées sont effacées et le solde fictif repart à 100 €.
+- **Changer le solde fictif** : `/simulation solde 200`.
+- **Annuler une opération** : web, onglet **Historique** → 🗑, ou `/annuler 12` (le n° est affiché dans `/historique`). Les soldes simulés sont rétablis.
+- En mode réel, seules les déclarations d'achats d'actions/ETF peuvent être annulées. Les opérations crypto ont vraiment eu lieu sur Revolut X.
+
 **Restaurer une sauvegarde** : arrête l'outil (`stop.sh`), décompresse `backups/microinvest-AAAA-MM-JJ.zip` dans `/volume1/docker/microinvest` (accepte de remplacer `config.json`, `data/`, `keys/`), puis relance la tâche.
 
 ---

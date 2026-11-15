@@ -12,7 +12,37 @@ from .broker import BrokerError
 FEE = 0.0009
 
 
-def run(market, cfg, days=365):
+PARAMS = ("budget", "max_order", "dip", "mult", "targets", "months")
+
+
+def params_from_cfg(cfg, months=12):
+    return {"budget": float(cfg["budget"]["monthly_crypto_eur"]), "max_order": float(cfg["budget"]["max_order_eur"]),
+            "dip": float(cfg["dca"]["dip_threshold_pct"]), "mult": float(cfg["dca"]["dip_multiplier"]),
+            "targets": dict(cfg["dca"]["targets"]), "months": int(months)}
+
+
+def check_params(p):
+    """Vérifie des paramètres de test ; lève ValueError avec un message clair."""
+    if not 1 <= p["budget"] <= 5000:
+        raise ValueError("budget entre 1 et 5000 €/mois")
+    if not 1 <= p["max_order"] <= 5000:
+        raise ValueError("plafond par ordre entre 1 et 5000 €")
+    if not 1 <= p["dip"] <= 90:
+        raise ValueError("seuil de baisse entre 1 et 90 %")
+    if not 1 <= p["mult"] <= 5:
+        raise ValueError("multiplicateur entre 1 et 5")
+    if not 1 <= p["months"] <= 12:
+        raise ValueError("période entre 1 et 12 mois")
+    if not p["targets"] or any(w <= 0 for w in p["targets"].values()):
+        raise ValueError("au moins une crypto, avec des poids > 0")
+    return p
+
+
+def run(market, cfg, days=365, params=None):
+    if params:
+        cfg = {"budget": {"monthly_crypto_eur": params["budget"], "max_order_eur": params["max_order"]},
+               "dca": {"targets": params["targets"], "dip_threshold_pct": params["dip"], "dip_multiplier": params["mult"]}}
+        days = int(params["months"] * 365 / 12)
     targets = cfg["dca"]["targets"]
     tsum = float(sum(targets.values()))
     weights = {a: w / tsum for a, w in targets.items()}
@@ -26,7 +56,7 @@ def run(market, cfg, days=365):
             closes[a] = c
     if not closes:
         raise BrokerError("historique de prix indisponible")
-    n = min(len(c) for c in closes.values())
+    n = min(min(len(c) for c in closes.values()), days + 31)
     closes = {a: c[-n:] for a, c in closes.items()}
     assets = list(closes)
     wsum = sum(weights[a] for a in assets)

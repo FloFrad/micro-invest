@@ -1321,6 +1321,90 @@ class TestWebCommands(Base):
             srv.shutdown()
 
 
+class TestLabAndSimulation(Base):
+    def setUp(self):
+        super().setUp()
+        self.market.history = {a: series("up_pullback" if i % 2 else "hot", start=p) for i, (a, p) in enumerate(BASE_PRICES.items())}
+        from microinvest.telegram_bot import WebCommands
+        self.web = WebCommands(self.e, base_dir=self.dir)
+
+    def test_backtest_with_params_and_apply(self):
+        r1, _ = self.e.run_backtest()
+        self.assertTrue(r1["current"])
+        p = dict(r1["params"], budget=80, dip=15, mult=1.5, months=6, targets={"BTC": 60, "ETH": 40})
+        r2, img = self.e.run_backtest(p)
+        self.assertFalse(r2["current"])
+        self.assertEqual(r2["assets"], ["BTC", "ETH"])
+        self.assertLess(r2["days"], 200)
+        self.assertGreater(r2["smart"]["invested"], r1["smart"]["invested"] * 0.5)
+        hist = self.e.store.get("backtests")
+        self.assertEqual([h["id"] for h in hist], [r2["id"], r1["id"]])
+        self.assertIn("80", self.e.backtests_text())
+        self.e.apply_backtest_params(r2["id"])
+        self.assertEqual(self.e.cfg["budget"]["monthly_crypto_eur"], 80)
+        self.assertEqual(self.e.cfg["dca"]["targets"], {"BTC": 60, "ETH": 40})
+        self.assertEqual(self.e.cfg["dca"]["dip_multiplier"], 1.5)
+        with open(self.cfg_path) as f:
+            self.assertEqual(json.load(f)["dca"]["dip_threshold_pct"], 15)
+
+    def test_lab_command_parsing_web(self):
+        out = self.web.run(text="/test budget=60 baisse=12 multi=2 cibles=BTC:70,SOL:30 mois=3")
+        msg = [m for m in out if m.get("image")][0]
+        self.assertIn("60,00", msg["html"])
+        apply_btn = msg["buttons"][0][0]["data"]
+        self.assertTrue(apply_btn.startswith("applybt:"))
+        out = self.web.run(button=apply_btn)
+        self.assertIn("Appliquer ces réglages", out[0]["html"])
+        out = self.web.run(button=out[0]["buttons"][0][0]["data"])
+        self.assertIn("Réglages appliqués", out[0]["html"])
+        self.assertEqual(self.e.cfg["dca"]["targets"], {"BTC": 70, "SOL": 30})
+        for bad in ("/test budget=abc", "/test inconnu=3", "/test mois=40", "/test cibles=ZZZ:10", "/test budget"):
+            out = self.web.run(text=bad)
+            self.assertIn("❌", out[0]["html"], bad)
+        out = self.web.run(text="/tests")
+        self.assertIn("Derniers tests", out[0]["html"])
+
+    def test_reset_and_balance(self):
+        self.e.run_dca()
+        self.e.store.set("frozen", True)
+        out = self.web.run(text="/simulation reset 250")
+        self.assertIn("simreset:250", out[0]["buttons"][0][0]["data"])
+        self.web.run(button="simreset:250")
+        self.assertEqual(self.e.store.trades(), [])
+        self.assertEqual(self.e.broker.balances(), {"EUR": 250.0})
+        self.assertFalse(self.e.flag("frozen"))
+        self.web.run(text="/simulation solde 80")
+        self.assertEqual(self.e.broker.balances()["EUR"], 80.0)
+
+    def test_undo_simulated_operations(self):
+        self.e.run_dca()                      # achat BTC
+        buy = self.e.store.trades()[0]
+        self.market.prices["BTC"] *= 2
+        self.e._prices_ts = 0
+        self.e.sell("BTC", 50, "test")
+        sell = self.e.store.trades()[0]
+        self.assertIn("déjà été vendue", self.web.run(button="undook:%d" % buy["id"])[0]["html"])
+        self.web.run(button="undook:%d" % sell["id"])
+        self.web.run(button="undook:%d" % buy["id"])
+        self.assertEqual(self.e.store.trades(), [])
+        self.assertAlmostEqual(self.e.broker.balances()["EUR"], 100.0, places=6)
+        self.assertAlmostEqual(self.e.broker.balances().get("BTC", 0), 0.0, places=10)
+
+    def test_live_mode_protects_real_operations(self):
+        self.e.run_dca()
+        self.e.record_etf(15)
+        crypto = [t for t in self.e.store.trades() if t["kind"] == "crypto"][0]
+        etf = [t for t in self.e.store.trades() if t["kind"] == "etf"][0]
+        self.e.mode = "live"  # simule le mode réel pour les vérifications
+        self.assertIn("Impossible", self.web.run(button="undo:%d" % crypto["id"])[0]["html"])
+        self.assertIn("réservé", (self.e.simulation_text() + self.web.run(text="/simulation reset 10")[0]["html"]).lower())
+        with self.assertRaises(ValueError):
+            self.e.reset_paper(10)
+        self.web.run(button="undook:%d" % etf["id"])  # une déclaration d'achat d'actions peut être corrigée
+        self.assertEqual(self.e.store.trades(kind="etf"), [])
+        self.e.mode = "paper"
+
+
 class TestConfig(unittest.TestCase):
     def test_rejects_bad_values(self):
         from microinvest.config import ConfigError

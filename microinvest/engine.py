@@ -954,20 +954,103 @@ class Engine:
             title="Portefeuille crypto - %s" % ("%d jours" % days if days else "depuis le debut"),
             x_labels=[lab(snaps[0]["ts"]), lab(snaps[-1]["ts"])])
 
+    # ------------------------------------------------ gestion de la simulation
+    def reset_paper(self, amount):
+        """Repart de zéro en simulation (jamais en réel)."""
+        if self.mode != "paper":
+            raise ValueError("réservé au mode simulation")
+        amount = float(amount)
+        if not 0 <= amount <= 1000000:
+            raise ValueError("solde entre 0 et 1 000 000 €")
+        with self.lock:
+            for table in ("trades", "approvals", "snapshots"):
+                self.store.x("DELETE FROM %s" % table)
+            for k, v in (("frozen", False), ("freeze_override", False), ("recovery_notified", False), ("tp_last", {}),
+                         ("opp_last", {}), ("low_balance_last", 0), ("reconcile_last", None), ("etf_value", None),
+                         ("etf_month", None), ("dca_week", None)):
+                self.store.set(k, v)
+            self.store.set("paper_balances", {self.cfg["quote"]: amount})
+        self.log("info", "Simulation remise à zéro avec %s" % eur(amount))
+        return "🔄 <b>Simulation remise à zéro</b> : %s fictifs, aucune opération.\nProchain achat : %s." % (
+            eur(amount), F.when(self.next_dca_ts(), self.clock()))
+
+    def set_paper_balance(self, amount):
+        if self.mode != "paper":
+            raise ValueError("réservé au mode simulation")
+        amount = float(amount)
+        if not 0 <= amount <= 1000000:
+            raise ValueError("solde entre 0 et 1 000 000 €")
+        b = self.broker.balances()
+        b[self.cfg["quote"]] = amount
+        self.store.set("paper_balances", b)
+        self.log("info", "Solde simulé fixé à %s" % eur(amount))
+        return "💶 Solde simulé : <b>%s</b> (tes positions simulées ne changent pas)." % eur(amount)
+
+    def trade(self, tid):
+        r = self.store.q("SELECT * FROM trades WHERE id=?", (tid,))
+        return r[0] if r else None
+
+    def can_undo(self, t):
+        if t["kind"] == "etf":
+            return True, ""
+        if self.mode != "paper":
+            return False, "en mode réel, une opération crypto a vraiment eu lieu sur Revolut X : elle ne peut pas être effacée"
+        return True, ""
+
+    def undo_trade(self, tid):
+        """Annule une opération : achat/vente crypto simulé (soldes fictifs rétablis) ou déclaration d'achat d'actions."""
+        with self.lock:
+            t = self.trade(tid)
+            if not t:
+                raise ValueError("opération introuvable")
+            ok, why = self.can_undo(t)
+            if not ok:
+                raise ValueError(why)
+            if t["kind"] == "crypto":
+                b = self.broker.balances()
+                q, quote = self.cfg["quote"], t["asset"]
+                if t["side"] == "buy":
+                    if b.get(quote, 0.0) < t["qty"] - 1e-12:
+                        raise ValueError("une partie de ce %s a déjà été vendue : annule d'abord la vente" % quote)
+                    b[quote] = b.get(quote, 0.0) - t["qty"]
+                    b[q] = b.get(q, 0.0) + t["eur"]
+                else:
+                    b[quote] = b.get(quote, 0.0) + t["qty"]
+                    b[q] = b.get(q, 0.0) - t["eur"]
+                self.store.set("paper_balances", b)
+            self.store.x("DELETE FROM trades WHERE id=?", (tid,))
+        what = "%s %s %s" % ("Achat" if t["side"] == "buy" else "Vente", t["asset"], eur(t["eur"]))
+        self.log("info", "Opération annulée : %s" % what)
+        return "↩️ <b>Opération annulée</b> : %s%s." % (F.esc(what), " (soldes simulés rétablis)" if t["kind"] == "crypto" else "")
+
+    def simulation_text(self):
+        if self.mode != "paper":
+            return "🧪 Tu es en mode <b>réel</b> : la gestion de la simulation n'est disponible qu'en mode simulation."
+        b = self.broker.balances()
+        n = len(self.store.trades(100000, kind="crypto"))
+        pf = self.portfolio()
+        return ("🧪 <b>Simulation</b>\nSolde fictif : <b>%s</b> · crypto simulée : %s · %d opération%s\n\n"
+                "<i>Remettre à zéro efface les opérations, l'historique et les questions de la simulation (jamais celles du réel).</i>\n"
+                "Commandes : <code>/simulation reset 100</code> · <code>/simulation solde 200</code> · "
+                "annuler une opération : bouton 🗑 de l'historique (web) ou <code>/annuler N°</code>" % (
+                    eur(b.get(self.cfg["quote"], 0.0)), eur(pf["value"]), n, "s" if n > 1 else ""))
+
     # ------------------------------------------------- test sur 12 mois (5)
-    def run_backtest(self):
+    def run_backtest(self, params=None):
+        """Test sur le passé. `params` (facultatif) : réglages à essayer sans toucher à la configuration."""
         from . import backtest, png
-        res = backtest.run(self.market, self.cfg)
+        p = backtest.check_params(params) if params else backtest.params_from_cfg(self.cfg)
+        res = backtest.run(self.market, self.cfg, params=p)
         n0 = res["series"][0]["i"] if res["series"] else 0
         total_days = res["days"]
         ts_of = lambda i: self.clock() - (total_days - (i - n0)) * 86400
         lab = lambda i: time.strftime("%d/%m", time.localtime(ts_of(i)))
         ser = res["series"]
         image = png.line_chart([
-            {"label": "DCA intelligent", "color": "accent", "points": [(p["i"], p["smart"]) for p in ser]},
-            {"label": "DCA simple", "color": "orange", "points": [(p["i"], p["simple"]) for p in ser]},
-            {"label": "Investi", "color": "series2", "points": [(p["i"], p["inv_simple"]) for p in ser], "dash": True}],
-            title="Test sur 12 mois (prix reels)", x_labels=[lab(ser[0]["i"]), lab(ser[-1]["i"])] if ser else None)
+            {"label": "DCA intelligent", "color": "accent", "points": [(x["i"], x["smart"]) for x in ser]},
+            {"label": "DCA simple", "color": "orange", "points": [(x["i"], x["simple"]) for x in ser]},
+            {"label": "Investi", "color": "series2", "points": [(x["i"], x["inv_simple"]) for x in ser], "dash": True}],
+            title="Test sur %d mois (prix reels)" % p["months"], x_labels=[lab(ser[0]["i"]), lab(ser[-1]["i"])] if ser else None)
         try:
             with open(os.path.join(self.base_dir, "data", "backtest.png"), "wb") as f:
                 f.write(image)
@@ -975,10 +1058,54 @@ class Engine:
             pass
         summary = {k: res[k] for k in ("days", "assets", "dip_buys", "weeks", "smart", "simple")}
         summary["ts"] = self.clock()
+        summary["id"] = max([h.get("id", 0) for h in self.store.get("backtests", [])] + [self.store.get("backtest_seq", 0)]) + 1
+        self.store.set("backtest_seq", summary["id"])
+        summary["params"] = p
+        summary["current"] = p == backtest.params_from_cfg(self.cfg, p["months"])
         self.store.set("backtest", summary)
-        self.log("info", "Test sur 12 mois : intelligent %s, simple %s" % (
-            pct(res["smart"]["gain_pct"] * 100), pct(res["simple"]["gain_pct"] * 100)))
+        # un même jeu de réglages n'apparaît qu'une fois (le test le plus récent remplace l'ancien)
+        hist = [h for h in self.store.get("backtests", []) if h.get("params") != p]
+        self.store.set("backtests", ([summary] + hist)[:8])
+        self.log("info", "Test sur %d mois : intelligent %s, simple %s" % (
+            p["months"], pct(res["smart"]["gain_pct"] * 100), pct(res["simple"]["gain_pct"] * 100)))
         return summary, image
+
+    def backtest_params_text(self, p):
+        return "%s/mois · max %s/ordre · baisse %s %% × %s · %s" % (
+            eur(p["budget"]), eur(p["max_order"]), F.num(p["dip"], 0), F.num(p["mult"], 1).replace(",0", ""),
+            " ".join("%s %g" % kv for kv in p["targets"].items()))
+
+    def find_backtest(self, bid):
+        for h in self.store.get("backtests", []):
+            if h.get("id") == bid:
+                return h
+        return None
+
+    def apply_backtest_params(self, bid):
+        h = self.find_backtest(bid)
+        if not h:
+            raise ValueError("test introuvable (relance-le)")
+        p = h["params"]
+        for key, val in (("budget.monthly_crypto_eur", p["budget"]), ("budget.max_order_eur", p["max_order"]),
+                         ("dca.dip_threshold_pct", p["dip"]), ("dca.dip_multiplier", p["mult"]), ("dca.targets", p["targets"])):
+            config_mod.update_file(self.cfg_path, key, val)
+        if p["max_order"] < self.cfg["budget"]["approval_above_eur"]:
+            config_mod.update_file(self.cfg_path, "budget.approval_above_eur", p["max_order"])
+        self.reload_config()
+        self.log("info", "Réglages du test appliqués : %s" % self.backtest_params_text(p))
+        return p
+
+    def backtests_text(self):
+        hist = self.store.get("backtests", [])
+        if not hist:
+            return "🧪 Aucun test pour l'instant. Lance <code>/test</code>."
+        rows = [["#", "Mois", "Budget", "Baisse", "Intellig.", "Simple"]]
+        for k, h in enumerate(hist, 1):
+            p = h["params"]
+            rows.append([str(k), str(p["months"]), F.teur(p["budget"], 0), "%g%%x%g" % (p["dip"], p["mult"]),
+                         F.tpct(h["smart"]["gain_pct"] * 100), F.tpct(h["simple"]["gain_pct"] * 100)])
+        return "🧪 <b>Derniers tests</b> (gain final, hors prises de bénéfices)\n%s\n<i>« Intellig. » = stratégie de l'outil avec ces réglages.</i>" % (
+            F.pre(F.table(rows)))
 
     def backtest_text(self, r):
         sm, si = r["smart"], r["simple"]
@@ -986,11 +1113,12 @@ class Engine:
         verdict = ("✅ Sur cette période, la stratégie de l'outil a fait <b>mieux</b> que l'achat fixe." if diff > 0.005 else
                    "➖ Sur cette période, la stratégie de l'outil a fait <b>moins bien</b> que l'achat fixe." if diff < -0.005 else
                    "➖ Sur cette période, les deux méthodes font <b>à peu près pareil</b>.")
-        return ("🧪 <b>Test sur %d jours</b> (vrais prix Revolut X, %s)\n\n"
+        return ("🧪 <b>Test sur %d jours</b> (vrais prix Revolut X, %s)\n<i>Réglages : %s%s</i>\n\n"
                 "🧠 <b>DCA intelligent</b> (l'outil)\n   investi %s → <b>%s</b> (%s)\n   pire moment : %s · %d achats renforcés\n"
                 "📏 <b>DCA simple</b> (montant fixe réparti)\n   investi %s → <b>%s</b> (%s)\n   pire moment : %s\n\n%s\n"
                 "<i>Prises de bénéfices non simulées. Les performances passées ne préjugent pas des performances futures.</i>" % (
-                    r["days"], F.esc(", ".join(r["assets"])),
+                    r["days"], F.esc(", ".join(r["assets"])), F.esc(self.backtest_params_text(r["params"])) if r.get("params") else "actuels",
+                    " (tes réglages actuels)" if r.get("current") else "",
                     eur(sm["invested"]), eur(sm["value"]), pct(sm["gain_pct"] * 100), pct(sm["worst_pct"] * 100), r["dip_buys"],
                     eur(si["invested"]), eur(si["value"]), pct(si["gain_pct"] * 100), pct(si["worst_pct"] * 100), verdict))
 
@@ -1067,11 +1195,12 @@ class Engine:
         for t in rows:
             d = time.strftime("%d/%m %Hh%M", time.localtime(t["ts"]))
             if t["kind"] == "etf":
-                table.append([d, "Action", t["asset"].split(".")[0][:6], F.teur(t["eur"])])
+                table.append(["#%d" % t["id"], d, "Action", t["asset"].split(".")[0][:6], F.teur(t["eur"])])
             else:
-                table.append([d, "Achat" if t["side"] == "buy" else "Vente", t["asset"][:6], F.teur(t["eur"])])
-        return "📜 <b>Dernières opérations</b>%s\n%s" % (" · 🧪 simulation" if self.mode == "paper" else "",
-                                                       F.pre(F.table(table, ["<", "<", "<", ">"])))
+                table.append(["#%d" % t["id"], d, "Achat" if t["side"] == "buy" else "Vente", t["asset"][:6], F.teur(t["eur"])])
+        return "📜 <b>Dernières opérations</b>%s\n%s%s" % (" · 🧪 simulation" if self.mode == "paper" else "",
+                                                         F.pre(F.table(table, ["<", "<", "<", "<", ">"])),
+                                                         "<i>Annuler une opération simulée : /annuler N°</i>" if self.mode == "paper" else "")
 
     def weekly_report_text(self):
         now = self.clock()
@@ -1174,6 +1303,7 @@ class Engine:
             "approvals": [{"id": a["id"], "kind": a["kind"], "text": F.strip_tags(a["text"]), "expires": a["expires"]}
                           for a in self.store.pending_approvals()],
             "trades": self.store.trades(30),
+            "n_crypto_trades": len(self.store.trades(1000000, kind="crypto")),
             "events": self.store.events(20),
             "snapshots": self.store.snapshots(self.clock() - 90 * 86400),
             "next_dca": self.next_dca_ts(),
@@ -1185,6 +1315,8 @@ class Engine:
             "goal": self.goal_status(),
             "alerts": self.price_alerts(),
             "backtest": self.store.get("backtest"),
+            "backtests": self.store.get("backtests", []),
+            "lab_defaults": __import__("microinvest.backtest", fromlist=["params_from_cfg"]).params_from_cfg(self.cfg),
             "settings": self._settings_state(),
             "reconcile": self.store.get("reconcile_last"),
             "backups": __import__("microinvest.backup", fromlist=["list_local"]).list_local(self.base_dir)[:5],

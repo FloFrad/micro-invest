@@ -114,7 +114,7 @@ dialog::backdrop{background:rgba(10,12,16,.45)}
 .msg .btns{margin-top:10px}
 .busy{opacity:.6;pointer-events:none}
 .goalbar{margin-top:14px}
-td.wrap,th.wrap{white-space:normal}
+td.wrap,th.wrap{white-space:normal;text-align:left}
 @media (max-width:560px){.tabs button{padding:8px 8px;font-size:14px}.big{font-size:30px}.card{padding:16px}}
 </style>
 </head>
@@ -223,9 +223,29 @@ td.wrap,th.wrap{white-space:normal}
         <p class="muted help">Les achats automatiques ont lieu chaque semaine. Ces boutons servent à agir tout de suite.</p></div>
 
       <div class="card"><h2>Analyse</h2>
-        <div class="btns"><button data-cmd="/radar maj">🔭 Nouvelle analyse Radar</button><button data-cmd="/graphique 90">📉 Graphique</button>
-          <button data-cmd="/test">🧪 Test sur 12 mois</button></div>
-        <div id="bt-res" class="muted help"></div></div>
+        <div class="btns"><button data-cmd="/radar maj">🔭 Nouvelle analyse Radar</button><button data-cmd="/graphique 90">📉 Graphique</button></div>
+        <p class="muted help">Le Radar tourne aussi chaque matin. Le graphique montre la valeur comparée au montant investi.</p></div>
+
+      <div class="card" id="sim-card" style="display:none"><h2>Simulation</h2>
+        <div id="sim-txt" class="muted"></div>
+        <div class="form"><input id="sim-amt" type="number" min="0" step="10" placeholder="100" aria-label="Montant fictif"> €
+          <button id="sim-reset">🔄 Remettre à zéro</button><button id="sim-bal">💶 Fixer le solde</button></div>
+        <p class="muted help">Uniquement la simulation, jamais le réel. Annuler une opération : 🗑 dans l'onglet Historique.</p></div>
+
+      <div class="card" style="grid-column:1/-1"><h2>Laboratoire : tester d'autres réglages sur le passé</h2>
+        <div class="form" style="margin-top:0">
+          <label>Budget crypto <input id="lb-budget" type="number" min="1" step="5" style="width:90px"> €/mois</label>
+          <label>Max par ordre <input id="lb-max" type="number" min="1" step="1" style="width:80px"> €</label>
+          <label>Achat renforcé si baisse de <input id="lb-dip" type="number" min="1" max="90" step="1" style="width:70px"> %</label>
+          <label>× <input id="lb-mult" type="number" min="1" max="5" step="0.1" style="width:70px"></label>
+          <label>Période <select id="lb-months"><option value="3">3 mois</option><option value="6">6 mois</option><option value="12" selected>12 mois</option></select></label>
+        </div>
+        <div class="form"><label style="flex:1;min-width:260px">Cibles <input id="lb-targets" class="wide" placeholder="BTC:40, ETH:25, SOL:10"></label></div>
+        <div class="btns" style="margin-top:10px;max-width:520px"><button class="primary" id="lb-run">🧪 Lancer le test</button><button id="lb-reset">↺ Reprendre mes réglages actuels</button></div>
+        <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Date</th><th class="wrap">Réglages testés</th><th>Période</th><th>Outil</th><th>Achat fixe</th><th></th></tr></thead>
+          <tbody id="t-bt"></tbody></table></div>
+        <div id="bt-res" class="muted help"></div>
+        <p class="muted help">« Outil » = la stratégie avec ces réglages ; « Achat fixe » = même budget chaque semaine, sans règle. Gains finaux sur les vrais prix Revolut X, hors prises de bénéfices. Le passé ne garantit pas l'avenir.</p></div>
 
       <div class="card"><h2>Objectif d'épargne</h2>
         <div id="goal-txt" class="muted">Aucun objectif.</div>
@@ -269,7 +289,7 @@ td.wrap,th.wrap{white-space:normal}
   <section class="panel" id="p-hist">
     <div class="two">
       <div class="card"><h2>Opérations</h2><div class="scroll"><table>
-        <thead><tr><th>Date</th><th>Actif</th><th>Type</th><th>Montant</th></tr></thead><tbody id="t-tr"></tbody></table></div></div>
+        <thead><tr><th>Date</th><th>Actif</th><th>Type</th><th>Montant</th><th></th></tr></thead><tbody id="t-tr"></tbody></table></div></div>
       <div class="card"><h2>Journal</h2><div class="scroll"><table><tbody id="t-ev"></tbody></table></div></div>
     </div>
   </section>
@@ -310,6 +330,9 @@ function when(ts){
   return JOURS[d.getDay()] + " " + d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"}) + " à " + h;
 }
 const store = { get(k,d){ try{ return localStorage.getItem(k) ?? d }catch(e){ return d } }, set(k,v){ try{ localStorage.setItem(k,v) }catch(e){} } };
+let labFilled = false;
+function fillLab(L){ $("lb-budget").value=L.budget; $("lb-max").value=L.max_order; $("lb-dip").value=L.dip; $("lb-mult").value=L.mult;
+  $("lb-months").value=String(L.months||12); $("lb-targets").value=Object.entries(L.targets).map(([k,v])=>k+":"+v).join(", "); }
 let S = null, range = +store.get("mi-range", 90), rkind = store.get("mi-rkind","crypto"), rfilter = store.get("mi-rfilter","all");
 
 function toast(m){const t=$("toast");t.textContent=m;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",4000);}
@@ -480,9 +503,26 @@ function render(s){
   $("plan-next").textContent = (s.stock_plan||[]).length ? "Rappel " + when(s.next_etf) + " : " + s.stock_plan.map(([k,v])=>k.split(".")[0]+" "+eur(v)).join(" · ") : "";
 
   // historique
+  const canUndo = t => t.kind==="etf" || s.mode==="paper";
   $("t-tr").innerHTML = s.trades.length ? s.trades.map(t=>`<tr><td>${dt(t.ts)}</td><td><b>${esc(t.kind==="etf"?t.asset.split(".")[0]:t.asset)}</b></td>
-    <td>${t.kind==="etf"?"Action (manuel)":t.side==="buy"?"Achat":"Vente"}</td><td class="${t.side==="sell"?"pos":""}">${eur(t.eur)}</td></tr>`).join("")
-    : `<tr><td colspan="4" class="empty">Aucune opération pour l'instant.</td></tr>`;
+    <td>${t.kind==="etf"?"Action (manuel)":t.order_id==="adjust"?"Ajustement":t.side==="buy"?"Achat":"Vente"}</td><td class="${t.side==="sell"?"pos":""}">${eur(t.eur)}</td>
+    <td>${canUndo(t)?`<button class="icon-btn" data-undo="${t.id}" aria-label="Annuler l'opération ${t.id}">🗑</button>`:""}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="empty">Aucune opération pour l'instant.</td></tr>`;
+  document.querySelectorAll("[data-undo]").forEach(b=>b.onclick=()=>runCmd({button:"undo:"+b.dataset.undo},"Annuler une opération"));
+
+  // simulation
+  $("sim-card").style.display = s.mode==="paper" ? "" : "none";
+  if(s.mode==="paper"){ $("sim-txt").innerHTML = `Solde fictif <b>${eur(s.balances.EUR||0)}</b> · crypto simulée ${eur(pf.value)} · ${s.n_crypto_trades} opération${s.n_crypto_trades>1?"s":""}`; }
+
+  // laboratoire
+  const L=s.lab_defaults; if(L && !labFilled){ fillLab(L); labFilled=true; }
+  const bts=s.backtests||[];
+  $("t-bt").innerHTML = bts.length ? bts.map(h=>{ const p=h.params; return `<tr><td>${dt(h.ts)}</td>
+    <td class="wrap">${eur(p.budget,0)}/mois · max ${eur(p.max_order,0)} · baisse ${p.dip} % × ${p.mult}<span class="muted" style="display:block">${esc(Object.entries(p.targets).map(([k,v])=>k+" "+v).join(" · "))}</span></td>
+    <td>${p.months} mois</td><td class="${h.smart.gain_pct>=0?"pos":"neg"}"><b>${pct(h.smart.gain_pct*100)}</b></td><td>${pct(h.simple.gain_pct*100)}</td>
+    <td>${h.current?'<span class="chip">actuels</span>':`<button data-apply="${h.id}">Appliquer</button>`}</td></tr>`; }).join("")
+    : `<tr><td colspan="6" class="empty">Aucun test : règle les paramètres puis « Lancer le test ».</td></tr>`;
+  document.querySelectorAll("[data-apply]").forEach(b=>b.onclick=()=>runCmd({button:"applybt:"+b.dataset.apply},"Appliquer des réglages"));
   $("t-ev").innerHTML = s.events.map(ev=>`<tr><td>${dt(ev.ts)}</td><td style="text-align:left;white-space:normal">${ev.level==="error"?"🔴 ":ev.level==="warn"?"🟠 ":""}${esc(ev.text)}</td></tr>`).join("");
 
   // réglages
@@ -526,7 +566,7 @@ function render(s){
   document.querySelectorAll("[data-btn3]").forEach(b=>b.onclick=()=>runCmd({button:b.dataset.btn3},"Alertes"));
   // test, réconciliation, sauvegardes
   const bt=s.backtest;
-  $("bt-res").innerHTML = bt ? `Dernier test (${dt(bt.ts)}) : intelligent <b>${pct(bt.smart.gain_pct*100)}</b> · simple <b>${pct(bt.simple.gain_pct*100)}</b><br><img src="/api/chart/backtest.png?t=${Math.round(bt.ts)}" alt="Test sur 12 mois" style="max-width:100%;margin-top:8px;border-radius:10px;border:1px solid var(--line)">` : "Aucun test pour l'instant.";
+  $("bt-res").innerHTML = bt ? `<img src="/api/chart/backtest.png?t=${Math.round(bt.ts)}" alt="Courbes du dernier test" style="max-width:640px;width:100%;margin-top:4px;border-radius:10px;border:1px solid var(--line)">` : "";
   const rc=s.reconcile;
   $("rc-txt").innerHTML = (rc ? (rc.ok ? "✅ Dernière vérification Revolut X : tout correspond (" + dt(rc.ts) + ")" : "⚠️ Écart détecté sur " + esc(rc.issues.join(", ")) + " (" + dt(rc.ts) + ")") : "Pas encore de vérification.")
     + "<br>" + ((s.backups||[]).length ? "Sauvegardes sur le NAS : " + esc(s.backups.slice(0,3).join(", ")) : "Pas encore de sauvegarde.");
@@ -543,6 +583,13 @@ async function load(){
   catch(e){ $("upd").textContent = "erreur de chargement : " + e; }
 }
 $("refresh").onclick = load;
+$("lb-run").onclick = () => {
+  const t = $("lb-targets").value.split(/[,;\s]+/).filter(x=>x).join(",");
+  cmd(`/test budget=${$("lb-budget").value} max=${$("lb-max").value} baisse=${$("lb-dip").value} multi=${$("lb-mult").value} mois=${$("lb-months").value} cibles=${t}`, "Laboratoire");
+};
+$("lb-reset").onclick = () => { if(S) fillLab(S.lab_defaults); };
+$("sim-reset").onclick = () => cmd("/simulation reset " + ($("sim-amt").value || 100), "Simulation");
+$("sim-bal").onclick = () => { const a=$("sim-amt").value; if(a!=="") cmd("/simulation solde " + a, "Simulation"); };
 $("g-save").onclick = () => { const a=$("g-amt").value; if(a>0) cmd("/objectif "+a+" "+($("g-date").value||""), "Objectif"); };
 $("g-del").onclick = () => cmd("/objectif 0", "Objectif");
 $("al-add").onclick = () => { const a=$("al-asset").value.trim(), p=$("al-price").value; if(a&&p>0) cmd("/alerte "+a+" "+$("al-op").value+" "+p, "Alerte"); };

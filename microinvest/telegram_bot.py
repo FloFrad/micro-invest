@@ -30,6 +30,7 @@ OUTILS = [
     [("🧾 Déclarer achat actions", "m:/etf"), ("💶 Budget", "m:/budget")],
     [("🔍 Vérifier Revolut X", "m:/verifier"), ("🛟 Sauvegarde", "m:/sauvegarde")],
     [("🧾 Export fiscal", "m:/export"), ("🧪 Test sur 12 mois", "m:/test")],
+    [("🧪 Comparer les tests", "m:/tests"), ("🎛 Simulation", "m:/simulation")],
     [("📒 Journal", "m:/journal"), ("⬅️ Menu", "m:/menu")],
 ]
 SYSTEME = [
@@ -66,6 +67,9 @@ Les boutons en bas de l'écran font l'essentiel. « ⚙️ Menu » donne accès 
 <code>/objectif 1000 2027-06</code> — objectif d'épargne
 <code>/graphique 30</code> — graphique sur 30 jours
 <code>/export 2026</code> — opérations et plus-values de 2026
+<code>/test budget=50 baisse=15 multi=1.5 cibles=BTC:60,ETH:40 mois=6</code> — tester d'autres réglages
+<code>/tests</code> — comparer les derniers tests
+<code>/simulation reset 100</code> · <code>/annuler 12</code> — réajuster la simulation
 <code>/radar crypto</code> · <code>/radar actions</code> · <code>/radar maj</code> — classements, nouvelle analyse
 <code>/cleapi TA_CLE</code> — clé API Revolut X (message effacé)
 <code>/depot proprietaire/depot</code> — dépôt GitHub des mises à jour
@@ -353,8 +357,20 @@ class TelegramBot:
             return self.backup_cmd()
         if cmd == "/export":
             return self.export_cmd(args)
-        if cmd in ("/test", "/test12"):
-            return self.test_cmd()
+        if cmd in ("/test", "/test12", "/labo"):
+            return self.test_cmd(args)
+        if cmd == "/tests":
+            hist = e.store.get("backtests", [])
+            buttons = [[("✅ Appliquer #%d" % k, "applybt:%d" % h["id"]) for k, h in enumerate(hist[i:i + 3], i + 1) if not h.get("current")]
+                       for i in range(0, min(len(hist), 6), 3)]
+            buttons = [r for r in buttons if r]
+            return (e.backtests_text(), buttons) if buttons else e.backtests_text()
+        if cmd == "/simulation":
+            return self.simulation_cmd(args)
+        if cmd == "/annuler":
+            if not args or not args[0].lstrip("#").isdigit():
+                return "Usage : <code>/annuler 12</code> (numéro visible dans l'historique)"
+            return self.on_button("undo:%s" % args[0].lstrip("#"))
         if cmd == "/graphique":
             return self.chart_cmd(args)
         if cmd == "/objectif":
@@ -517,6 +533,38 @@ class TelegramBot:
         if data.startswith("rmok:"):
             _, k, sym = data.split(":", 2)
             return self.set_target([sym, "0"]) if k == "c" else self.set_stock_target([sym.split(".")[0], "0"])
+        if data.startswith("applybt:"):
+            h = e.find_backtest(int(data.split(":")[1]))
+            if not h:
+                return "Test introuvable : relance-le."
+            return ("✅ <b>Appliquer ces réglages ?</b>\n%s\n<i>Ils remplacent tes réglages actuels pour les prochains achats.</i>" % F.esc(
+                e.backtest_params_text(h["params"])), [[("✅ Oui, appliquer", "applyok:%s" % data.split(":")[1]), ("❌ Non", "cmd:noop")]])
+        if data.startswith("applyok:"):
+            try:
+                p = e.apply_backtest_params(int(data.split(":")[1]))
+            except Exception as ex:
+                return "❌ %s" % F.esc(ex)
+            return "✅ <b>Réglages appliqués</b> : %s" % F.esc(e.backtest_params_text(p))
+        if data.startswith("undo:"):
+            t = e.trade(int(data.split(":")[1]))
+            if not t:
+                return "Opération introuvable."
+            ok, why = e.can_undo(t)
+            if not ok:
+                return "⛔ Impossible : %s." % F.esc(why)
+            return ("↩️ <b>Annuler cette opération ?</b>\n%s %s %s du %s" % (
+                "Achat" if t["side"] == "buy" else "Vente", F.esc(t["asset"]), F.eur(t["eur"]),
+                time.strftime("%d/%m %Hh%M", time.localtime(t["ts"]))), [[("↩️ Oui, annuler", "undook:%d" % t["id"]), ("❌ Non", "cmd:noop")]])
+        if data.startswith("undook:"):
+            try:
+                return e.undo_trade(int(data.split(":")[1]))
+            except Exception as ex:
+                return "⛔ %s" % F.esc(ex)
+        if data.startswith("simreset:"):
+            try:
+                return e.reset_paper(float(data.split(":")[1]))
+            except Exception as ex:
+                return "⛔ %s" % F.esc(ex)
         if data.startswith("alrm:"):
             e.remove_price_alert(int(data.split(":")[1]))
             return self.alerts_list()
@@ -744,11 +792,51 @@ class TelegramBot:
                     year, " · 🧪 simulation" if e.mode == "paper" else "", len(sm["cessions"]), "s" if len(sm["cessions"]) > 1 else "",
                     F.eur(sm["total_cessions"]), F.signed_eur(sm["pv"]), verdict))
 
-    def test_cmd(self):
+    LAB_KEYS = {"budget": "budget", "b": "budget", "max": "max_order", "max_ordre": "max_order", "plafond": "max_order",
+                "baisse": "dip", "seuil": "dip", "dip": "dip", "multi": "mult", "mult": "mult", "multiplicateur": "mult",
+                "x": "mult", "cibles": "targets", "cible": "targets", "mois": "months", "periode": "months", "période": "months"}
+
+    def parse_lab(self, args):
+        """« budget=50 baisse=15 multi=1.5 cibles=BTC:50,ETH:50 mois=6 » → paramètres de test."""
+        from .backtest import params_from_cfg, check_params
+        p = params_from_cfg(self.engine.cfg)
+        for a in args:
+            if "=" not in a:
+                raise ValueError("« %s » : écris nom=valeur (ex. budget=50)" % a)
+            k, v = a.split("=", 1)
+            key = self.LAB_KEYS.get(k.lower())
+            if not key:
+                raise ValueError("« %s » inconnu. Possibles : budget, max, baisse, multi, cibles, mois" % k)
+            if key == "targets":
+                t = {}
+                for part in v.split(","):
+                    if not part.strip():
+                        continue
+                    sym, _, w = part.partition(":")
+                    t[sym.strip().upper()] = float(w.replace(",", ".")) if w else 10.0
+                for sym in t:
+                    if sym not in self.engine.cfg["dca"]["targets"]:
+                        self.engine.market.pair_info(sym)
+                p["targets"] = t
+            elif key == "months":
+                p["months"] = int(float(v))
+            else:
+                p[key] = float(v.replace(",", ".").replace("€", "").replace("%", ""))
+        return check_params(p)
+
+    def test_cmd(self, args=None):
+        try:
+            params = self.parse_lab(args) if args else None
+        except Exception as ex:
+            return ("❌ %s\nExemple : <code>/test budget=50 baisse=15 multi=1.5 cibles=BTC:50,ETH:30,SOL:20 mois=6</code>" % F.esc(ex))
+
         def work():
             try:
-                res, image = self.engine.run_backtest()
-                self.send_photo(image, self.engine.backtest_text(res))
+                res, image = self.engine.run_backtest(params)
+                buttons = [[("🧪 Comparer les tests", "m:/tests")]]
+                if not res.get("current"):
+                    buttons[0].insert(0, ("✅ Appliquer ces réglages", "applybt:%d" % res["id"]))
+                self.send_photo(image, self.engine.backtest_text(res), buttons)
             except Exception as ex:
                 log.exception("Test 12 mois")
                 self.notify("❌ <b>Test impossible</b> : %s" % F.esc(ex))
@@ -757,6 +845,31 @@ class TelegramBot:
             return None
         threading.Thread(target=work, name="backtest", daemon=True).start()
         return "🧪 Test lancé sur les 12 derniers mois de prix réels… résultat dans 15 à 30 secondes."
+
+    def simulation_cmd(self, args):
+        e = self.engine
+        if not args:
+            if e.mode != "paper":
+                return e.simulation_text()
+            start = float(e.cfg.get("paper_start_eur", 100))
+            return (e.simulation_text(), [[("🔄 Remettre à zéro (%s)" % F.eur(start, 0), "simreset:%g" % start)]])
+        sub = args[0].lower()
+        try:
+            amount = float(args[1].replace(",", ".").replace("€", "")) if len(args) > 1 else None
+        except ValueError:
+            return "Montant invalide."
+        if sub in ("reset", "zero", "zéro", "raz"):
+            if e.mode != "paper":
+                return "⛔ Réservé au mode simulation."
+            amount = amount if amount is not None else float(e.cfg.get("paper_start_eur", 100))
+            return ("🔄 <b>Remettre la simulation à zéro avec %s ?</b>\nToutes les opérations simulées seront effacées." % F.eur(amount),
+                    [[("🔄 Oui, remettre à zéro", "simreset:%g" % amount), ("❌ Non", "cmd:noop")]])
+        if sub == "solde" and amount is not None:
+            try:
+                return e.set_paper_balance(amount)
+            except Exception as ex:
+                return "⛔ %s" % F.esc(ex)
+        return "Usage : <code>/simulation</code> · <code>/simulation reset 100</code> · <code>/simulation solde 200</code>"
 
     def chart_cmd(self, args):
         e = self.engine
