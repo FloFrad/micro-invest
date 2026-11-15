@@ -1405,6 +1405,30 @@ class TestLabAndSimulation(Base):
         self.e.mode = "paper"
 
 
+class TestStockDeclaration(Base):
+    def test_declare_on_chosen_line(self):
+        from microinvest.telegram_bot import WebCommands
+        self.e.cfg["stocks"]["targets"] = {"IWDA.AS": 80, "NVDA": 20}
+        web = WebCommands(self.e, base_dir=self.dir)
+        web.run(text="/etf 5 nvda")
+        web.run(text="/etf ASML 7,5")          # hors plan : accepté (liste suivie)
+        web.run(text="/etf 10")                # sans ligne : ligne principale
+        self.assertEqual(self.e.stock_invested(), {"NVDA": 5.0, "ASML.AS": 7.5, "IWDA.AS": 10.0})
+        out = web.run(text="/etf 3 ZZZZ")
+        self.assertIn("inconnu", out[0]["html"])
+        out = web.run(text="/etf")
+        datas = [b["data"] for row in out[0]["buttons"] for b in row]
+        self.assertIn("cmd:etf_default", datas)
+        line_btn = [d for d in datas if d.startswith("etfrec:")]
+        self.assertTrue(line_btn)
+        k = line_btn[0].split(":")[1]
+        before = self.e.stock_invested().get(k, 0)
+        web.run(button=line_btn[0])
+        self.assertGreater(self.e.stock_invested()[k], before)
+        tickers = [u["ticker"] for u in self.e.state()["stock_universe"]]
+        self.assertIn("ASML.AS", tickers)
+
+
 class TestConfig(unittest.TestCase):
     def test_rejects_bad_values(self):
         from microinvest.config import ConfigError

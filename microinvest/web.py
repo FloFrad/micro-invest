@@ -209,7 +209,8 @@ def make_handler(engine, password, clock=time.time, commands=None):
                     amt = float(body.get("amount", 0))
                     if not 0 < amt <= 10000:
                         return self._json({"error": "montant invalide"}, 400)
-                    engine.record_etf(amt)
+                    line = engine.resolve_stock(str(body.get("ticker") or ""))
+                    engine.record_etf(amt, [[line, amt]] if line else None)
                     msg = "Achat ETF enregistré."
                 elif p == "/api/etf_value":
                     v = float(body.get("value", -1))

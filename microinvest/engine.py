@@ -606,6 +606,18 @@ class Engine:
                               "Puis appuie sur « ✅ Fait ».\n<i>Autre montant : /etf 12.50</i>" % (
                                   F.month_name(self.clock()), eur(total), detail), hours=72)
 
+    def resolve_stock(self, sym):
+        """Code d'une ligne actions/ETF à partir de « NVDA », « iwda », « IWDA.AS »… (ligne du plan ou liste suivie)."""
+        from .radar import STOCK_INFO
+        sym = (sym or "").strip().upper()
+        if not sym:
+            return None
+        for pool in (list(self.stock_targets()), list(STOCK_INFO)):
+            for k in pool:
+                if k.upper() == sym or k.split(".")[0].upper() == sym:
+                    return k
+        return None
+
     def record_etf(self, amount, lines=None):
         if not lines:
             targets = self.stock_targets()
@@ -1323,6 +1335,7 @@ class Engine:
             "version": self.version_info(),
             "stock_plan": self.stock_plan(),
             "stock_labels": {k: self.stock_label(k) for k in self.stock_targets()},
+            "stock_universe": [{"ticker": t, "name": n, "search": q} for t, n, c, q in __import__("microinvest.radar", fromlist=["STOCKS"]).STOCKS],
             "config": {
                 "budget": self.cfg["budget"], "targets": self.cfg["dca"]["targets"],
                 "dca_day": JOURS[self.cfg["dca"]["weekday"]], "dca_hour": self.cfg["dca"]["hour"],

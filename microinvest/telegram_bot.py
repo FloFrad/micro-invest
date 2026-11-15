@@ -57,7 +57,7 @@ AIDE = """🤖 <b>Micro-invest — aide</b>
 Les boutons en bas de l'écran font l'essentiel. « ⚙️ Menu » donne accès à tout le reste.
 
 <b>Commandes avec une valeur</b>
-<code>/etf 15</code> — déclarer 15 € d'achats actions/ETF
+<code>/etf 15 IWDA</code> — déclarer 15 € d'achat sur une ligne actions/ETF
 <code>/etfvaleur 230.50</code> — valeur actuelle de tes actions/ETF
 <code>/regler budget_crypto 40</code> — changer un réglage (liste : /reglages)
 <code>/cible SOL 12</code> — poids d'une crypto (0 = la retirer)
@@ -432,13 +432,28 @@ class TelegramBot:
                 amt = e.cfg["budget"]["monthly_etf_eur"]
                 plan = e.stock_plan()
                 detail = "\n".join("• %s : <b>%s</b>" % (e.stock_label(k, html=True), F.eur(a)) for k, a in plan) or "(plan vide)"
+                buttons = [[("✅ J'ai acheté le tout (%s)" % F.eur(sum(a for _, a in plan)), "cmd:etf_default")]] if plan else []
+                lines_b = [("🧾 %s %s" % (k.split(".")[0], F.eur(a)), "etfrec:%s:%g" % (k, a)) for k, a in plan]
+                buttons += [lines_b[i:i + 2] for i in range(0, len(lines_b), 2)]
                 return ("🧾 <b>Achats actions/ETF prévus ce mois-ci</b>\n%s\n\nAchète-les dans l'appli Revolut (Investir), "
-                        "puis déclare-les ici.\n<i>Autre montant : /etf 12.50 · Valeur totale : /etfvaleur 230</i>" % detail,
-                        [[("✅ J'ai acheté ces %s" % F.eur(sum(a for _, a in plan)), "cmd:etf_default")]])
-            amt = _num(args)
+                        "puis déclare-les ici : tout d'un coup, ou ligne par ligne.\n"
+                        "<i>Autre montant ou autre ligne : /etf 12.50 NVDA · Valeur totale : /etfvaleur 230</i>" % detail,
+                        buttons or None)
+            amt, ticker = None, None
+            for a in args:
+                v = _num([a])
+                if v is not None and amt is None:
+                    amt = v
+                elif ticker is None:
+                    ticker = a
             if amt is None or amt <= 0 or amt > 10000:
-                return "Usage : /etf 15  (montant en euros acheté dans l'appli Revolut)"
-            e.record_etf(amt)
+                return "Usage : <code>/etf 15 IWDA</code> (montant en euros, puis la ligne ; sans ligne = ligne principale du plan)"
+            line = None
+            if ticker:
+                line = e.resolve_stock(ticker)
+                if not line:
+                    return "❌ « %s » inconnu. Lignes de ton plan : %s" % (F.esc(ticker), F.esc(", ".join(k.split(".")[0] for k in e.stock_targets())))
+            e.record_etf(amt, [[line, amt]] if line else None)
             return None
         if cmd == "/etfvaleur":
             v = _num(args)
@@ -515,6 +530,10 @@ class TelegramBot:
         if data == "cmd:etf_default":
             plan = e.stock_plan()
             e.record_etf(sum(a for _, a in plan), plan)
+            return None
+        if data.startswith("etfrec:"):
+            _, k, a = data.split(":", 2)
+            e.record_etf(float(a), [[k, float(a)]])
             return None
         if data.startswith("add:"):
             _, k, sym = data.split(":", 2)

@@ -284,6 +284,7 @@ Revolut n'a pas d'API pour les actions : cette partie reste manuelle, mais guid�
   3. Reviens sur Telegram → **✅ Fait**.
   4. Le bot te demande ensuite la valeur totale de tes actions/ETF : réponds `/etfvaleur 123.45`.
 - Sans réponse au bout de 24 h, il te le rappelle une fois.
+- **Déclarer un achat sur une ligne précise** (autre montant, achat en plus, action hors plan) : web, onglet **Portefeuille** → carte **Plan actions/ETF** → choisis la ligne dans la liste, saisis le montant, puis **Déclarer cet achat**. Sur Telegram : `/etf 12.50 NVDA`, ou le bouton de la ligne sous `/etf`.
 
 ---
 

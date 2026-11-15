@@ -182,7 +182,8 @@ td.wrap,th.wrap{white-space:normal;text-align:left}
         <h2>Plan actions/ETF</h2>
         <div class="scroll"><table><thead><tr><th class="wrap">Ligne</th><th>Cible</th><th>Investi</th></tr></thead><tbody id="t-plan"></tbody></table></div>
         <p class="muted" id="plan-next" style="margin:10px 0"></p>
-        <div class="row"><input id="i-etf" type="number" step="0.01" min="0" placeholder="15.00" aria-label="Montant acheté"><button id="b-etf-decl">Déclarer un achat</button></div>
+        <div class="form" style="margin-top:0"><select id="i-etf-line" aria-label="Ligne achetée" style="max-width:100%"></select>
+          <input id="i-etf" type="number" step="0.01" min="0" placeholder="15.00" aria-label="Montant acheté"> €<button id="b-etf-decl">Déclarer cet achat</button></div>
         <div class="row" style="margin-top:8px"><input id="i-etfv" type="number" step="0.01" min="0" placeholder="230.50" aria-label="Valeur totale"><button id="b-etfv">Mettre à jour la valeur</button></div>
       </div>
     </div>
@@ -499,7 +500,17 @@ function render(s){
 
   // plan actions
   const tg = s.etf.targets||{}, tsum = Object.values(tg).reduce((x,y)=>x+y,0)||1;
-  $("t-plan").innerHTML = Object.entries(tg).sort((x,y)=>y[1]-x[1]).map(([k,w])=>`<tr><td class="wrap"><b>${esc(((s.stock_labels||{})[k]||k).replace(/ \(cherche.*$/,""))}</b><span class="muted" style="display:block">${esc(k)}</span></td><td>${Math.round(w/tsum*100)} %</td><td>${eur((s.etf.by_line||{})[k]||0)}</td></tr>`).join("");
+  const byLine = s.etf.by_line||{}, extra = Object.keys(byLine).filter(k=>!(k in tg));
+  const lname = k => { const u=(s.stock_universe||[]).find(x=>x.ticker===k); return ((s.stock_labels||{})[k]||(u&&u.name)||k).replace(/ \(cherche.*$/,""); };
+  $("t-plan").innerHTML = Object.entries(tg).sort((x,y)=>y[1]-x[1]).map(([k,w])=>`<tr><td class="wrap"><b>${esc(lname(k))}</b><span class="muted" style="display:block">${esc(k)}</span></td><td>${Math.round(w/tsum*100)} %</td><td>${eur(byLine[k]||0)}</td></tr>`).join("")
+    + extra.map(k=>`<tr><td class="wrap"><b>${esc(lname(k))}</b><span class="muted" style="display:block">${esc(k)} · hors plan</span></td><td>—</td><td>${eur(byLine[k])}</td></tr>`).join("");
+  // liste des lignes pour la déclaration d'achat : d'abord ton plan, puis les autres actions/ETF suivis
+  const sel=$("i-etf-line"), keep=sel.value, plan=Object.keys(tg).sort((a,b)=>tg[b]-tg[a]);
+  const short = k => ((s.stock_labels||{})[k]||k).replace(/ \(cherche.*$/,"");
+  sel.innerHTML = `<optgroup label="Mon plan">${plan.map(k=>`<option value="${esc(k)}">${esc(short(k))} (${esc(k.split(".")[0])})</option>`).join("")}</optgroup>`
+    + `<optgroup label="Autres actions et ETF">${(s.stock_universe||[]).filter(u=>!(u.ticker in tg)).map(u=>`<option value="${esc(u.ticker)}">${esc(u.name)} (${esc(u.ticker.split(".")[0])})</option>`).join("")}</optgroup>`;
+  if(keep && [...sel.options].some(o=>o.value===keep)) sel.value=keep;
+  const pl = (s.stock_plan||[]).find(([k])=>k===sel.value); if(pl && !$("i-etf").value) $("i-etf").placeholder = pl[1].toFixed(2);
   $("plan-next").textContent = (s.stock_plan||[]).length ? "Rappel " + when(s.next_etf) + " : " + s.stock_plan.map(([k,v])=>k.split(".")[0]+" "+eur(v)).join(" · ") : "";
 
   // historique
@@ -602,7 +613,8 @@ $("free").onkeydown = e => { if(e.key==="Enter") $("free-go").click(); };
 $("tg-add").onclick = () => { const a=$("tg-new").value.trim(), w=$("tg-neww").value||5; if(a) cmd("/cible "+a+" "+w, "Cibles crypto"); };
 $("sg-add").onclick = () => { const a=$("sg-new").value.trim(), w=$("sg-neww").value||20; if(a) cmd("/cible_action "+a+" "+w, "Plan actions"); };
 $("b-dca").onclick = () => cmd("/acheter", "Achat");
-$("b-etf-decl").onclick = () => { const v=parseFloat($("i-etf").value); if(v>0) post("/api/etf",{amount:v}); };
+$("b-etf-decl").onclick = () => { const v=parseFloat($("i-etf").value), l=$("i-etf-line").value;
+  if(!(v>0)){ toast("Indique le montant acheté."); return; } cmd("/etf " + v + " " + l, "Achat actions/ETF"); $("i-etf").value=""; };
 $("b-etfv").onclick = () => { const v=parseFloat($("i-etfv").value); if(v>=0) post("/api/etf_value",{value:v}); };
 let resizeT; window.addEventListener("resize", ()=>{ clearTimeout(resizeT); resizeT=setTimeout(()=>{ if(S) chart(); }, 150); });
 load(); setInterval(load, 30000);
